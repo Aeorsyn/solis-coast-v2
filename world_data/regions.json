@@ -1,0 +1,22 @@
+[
+  {
+    "slug": "brickell_miami_fl",
+    "name": "Brickell, Miami, FL",
+    "biome": "florida_coast"
+  },
+  {
+    "slug": "south_beach_miami_beach_fl",
+    "name": "South Beach, Miami Beach, FL",
+    "biome": "florida_coast"
+  },
+  {
+    "slug": "miami_dade_pbf",
+    "name": "Miami-Dade County, FL",
+    "biome": "florida_coast"
+  },
+  {
+    "slug": "everglades_pbf",
+    "name": "Everglades, FL",
+    "biome": "everglades"
+  }
+]

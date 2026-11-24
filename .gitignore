@@ -1,0 +1,6 @@
+.godot/
+*.apk
+*.apk.idsig
+*.gguf
+models/
+world_data/*_pbf/

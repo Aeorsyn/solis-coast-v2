@@ -1,0 +1,10 @@
+[
+  {
+    "name": "Downtown Scan Anchor",
+    "file": "res://assets/landmarks/demo.compressed.ply",
+    "pos": [12.0, 0.0, -12.0],
+    "scale": 1.0,
+    "yaw_deg": 0.0,
+    "collision": true
+  }
+]
