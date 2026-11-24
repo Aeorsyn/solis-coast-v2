@@ -4,3 +4,5 @@
 *.gguf
 models/
 world_data/*_pbf/
+docs/
+build/

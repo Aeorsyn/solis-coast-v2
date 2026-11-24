@@ -1,0 +1,84 @@
+name: Build & Deploy Solis Coast Web (Godot 4.7.2)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: "4.7.2"
+  GODOT_RELEASE: "4.7.2-stable"
+  EXPORT_NAME: "Web"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Cache Godot 4.7.2 & Export Templates
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/bin/godot
+            ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable
+          key: godot-${{ env.GODOT_RELEASE }}-linux-x86_64
+
+      - name: Download Godot 4.7.2 & Export Templates
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable /tmp/godot_dl
+          cd /tmp/godot_dl
+
+          curl -fSL -o godot.zip \
+            "https://github.com/godotengine/godot-builds/releases/download/${{ env.GODOT_RELEASE }}/Godot_v${{ env.GODOT_RELEASE }}_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv Godot_v${{ env.GODOT_RELEASE }}_linux.x86_64 ~/.local/bin/godot
+          chmod +x ~/.local/bin/godot
+
+          curl -fSL -o templates.tpz \
+            "https://github.com/godotengine/godot-builds/releases/download/${{ env.GODOT_RELEASE }}/Godot_v${{ env.GODOT_RELEASE }}_export_templates.tpz"
+          unzip -q templates.tpz
+          mv templates/* ~/.local/share/godot/export_templates/${{ env.GODOT_VERSION }}.stable/
+          rm -rf /tmp/godot_dl
+
+      - name: Add Godot to PATH
+        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Import Assets & Export Web Build
+        run: |
+          mkdir -p build/web
+          godot --version
+          godot --headless --import || true
+          godot --headless --export-release "${{ env.EXPORT_NAME }}" build/web/index.html
+          ls -lh build/web/
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Web Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
