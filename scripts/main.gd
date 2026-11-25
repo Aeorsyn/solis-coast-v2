@@ -23,9 +23,14 @@ var rpg_sys: RPGSystem = null
 var nature_mgr: NatureManager = null
 var uap_form: BiblicalUAP = null
 var is_uap_form := false
+var noclip_mode := false
+var _saved_col_mask := 1
+var _saved_col_layer := 1
 var uap_manual_lock := false
 var uap_hud_lbl: Label = null
 var cosmos_mgr: CosmosManager = null
+var space_sky_mat: ShaderMaterial = null
+var planet_chat: PlanetChat = null
 var char_creator: CharacterCreatorUI = null
 var max_hp := 100.0
 var event_dir: EventDirector = null
@@ -89,6 +94,10 @@ func _ready() -> void:
 	nature_mgr = NatureManager.new(); add_child(nature_mgr); nature_mgr.setup(is_desktop)
 	uap_form = BiblicalUAP.new(); uap_form.visible = false; player.add_child(uap_form)
 	cosmos_mgr = CosmosManager.new(); add_child(cosmos_mgr); cosmos_mgr.setup()
+	planet_chat = PlanetChat.new(); add_child(planet_chat)
+	planet_chat.discourse_impact.connect(_on_discourse_impact)
+	planet_chat.closed.connect(_on_planet_chat_closed)
+	space_sky_mat = ShaderMaterial.new(); space_sky_mat.shader = load("res://shaders/deep_space_sky.gdshader")
 	cosmos_mgr.chronicle_event.connect(func(m): if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	cosmos_mgr.reward_granted.connect(func(c, x, loot): banked_cash += c; if rpg_sys: rpg_sys.add_xp(x); if loot: rpg_sys.roll_loot_drop(true))
 	rpg_sys.toast.connect(_toast)
@@ -285,6 +294,12 @@ func _on_touch_action(aid: String) -> void:
 		"ghost": _toggle_ghost()
 		"hell": _toggle_hellfire()
 		"abyss": _toggle_abyss()
+		"uap":
+			if abyss_mgr and abyss_mgr.active:
+				uap_manual_lock = not uap_manual_lock; _set_uap_form(uap_manual_lock)
+		"hail": _open_planet_discourse()
+		"mode": _cycle_input_mode()
+		"noclip": _toggle_noclip()
 		"cycle_mode": _cycle_input_mode()
 		"act":
 			var n = _find_nearest_npc(5.5)
@@ -371,18 +386,27 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F3: _cycle_weather()
 			KEY_F4: _toggle_hellfire()
 			KEY_F5: _toggle_abyss()
+			KEY_F6: _toggle_noclip()
 			KEY_Z:
 				if cosmos_mgr: cosmos_mgr.interact_nearest("seed", _ppos())
 			KEY_X:
 				if cosmos_mgr: cosmos_mgr.interact_nearest("teach", _ppos())
 			KEY_V:
 				if cosmos_mgr: cosmos_mgr.interact_nearest("smite", _ppos())
+			KEY_C:
+				if not (abyss_mgr and abyss_mgr.active and Input.is_physical_key_pressed(KEY_SHIFT)): _open_planet_discourse()
 			KEY_H:
 				if cosmos_mgr: cosmos_mgr.toggle_chronicle()
 			KEY_B:
 				if cosmos_mgr: cosmos_mgr.shatter_nearest(_ppos())
 			KEY_N:
 				if cosmos_mgr: cosmos_mgr.reforge_planet(_ppos(), -cam.global_transform.basis.z)
+			KEY_Y:
+				if cosmos_mgr: cosmos_mgr.respond_comm("reveal", _ppos())
+			KEY_T:
+				if cosmos_mgr: cosmos_mgr.respond_comm("riddle", _ppos())
+			KEY_P:
+				if cosmos_mgr: cosmos_mgr.respond_comm("silence", _ppos())
 			KEY_U:
 				if abyss_mgr and abyss_mgr.active:
 					uap_manual_lock = not uap_manual_lock
@@ -391,6 +415,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_V: _toggle_ghost()
 			KEY_B:
 				if audio_mgr: _toast("AUDIO: " + ("MUTED" if audio_mgr.toggle_mute() else "ON"))
+			KEY_C:
+				if not (abyss_mgr and abyss_mgr.active and Input.is_physical_key_pressed(KEY_SHIFT)): _open_planet_discourse()
 			KEY_H: ots_cam.swap_shoulder()
 			KEY_F:
 				if event_dir: event_dir.try_interact(_ppos(), streamer)
@@ -469,6 +495,8 @@ func _update_lighting(delta: float) -> void:
 
 func _physics_process(delta: float) -> void:
 	var u_delta = delta / maxf(Engine.time_scale, 0.08)
+	if noclip_mode and player and not (chat_panel and chat_panel.visible) and not (planet_chat and planet_chat.panel.visible):
+		_step_noclip(u_delta)
 	_update_lighting(delta)
 	var ppos = _ppos()
 	if real_world_mode and streamer: streamer.update_streaming(ppos)
@@ -477,6 +505,7 @@ func _physics_process(delta: float) -> void:
 	if crowd_mgr: crowd_mgr.update_crowd(delta, ppos, streamer)
 	if wildlife_mgr: wildlife_mgr.update_wildlife(delta, ppos)
 	if hellfire_mgr: hellfire_mgr.update_hellfire(delta, ppos)
+	if ots_cam and touch_hud: ots_cam.touch_look = touch_hud.look_vec
 	if cosmos_mgr:
 		var siphon_on = is_uap_form and Input.is_physical_key_pressed(KEY_G)
 		cosmos_mgr.update_cosmos(delta, ppos, is_uap_form, siphon_on)
@@ -528,7 +557,7 @@ func _physics_process(delta: float) -> void:
 	var pad_fire = (pad_r2 > 0.25) or (pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_RIGHT_SHOULDER))
 	var pad_sprint = pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_LEFT_STICK)
 
-	if not chat_panel.visible:
+	if not chat_panel.visible and not (planet_chat and planet_chat.panel.visible):
 		focus_active = Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_ALT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_XBUTTON1) or touch_hud.hold_focus or (active_veh == null and pad_l2 > 0.75)
 		var sandy_on = (rpg_sys != null and rpg_sys.sandy_timer > 0.0)
 		var target_ts = 0.24 if sandy_on else (0.35 if focus_active else 1.0)
@@ -555,7 +584,7 @@ func _physics_process(delta: float) -> void:
 			var cam_r =  ots_cam.yaw_pivot.global_transform.basis.x; cam_r.y = 0; cam_r = cam_r.normalized()
 			var d = cam_r * raw_d.x + cam_f * (-raw_d.y)
 			var sp = Input.is_physical_key_pressed(KEY_SHIFT) or touch_hud.hold_brake or pad_sprint
-			var hold_aim = (input_mode == "PS5" and pad_aim) or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) or touch_hud.hold_focus
+			var hold_aim = (input_mode == "PS5" and pad_aim) or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) or touch_hud.hold_aim
 			var is_ads = hold_aim or want_fire
 			var ov_m = 1.45 if ((hellfire_mgr and hellfire_mgr.overdrive_timer > 0.0) or (abyss_mgr and abyss_mgr.overdrive_timer > 0.0)) else 1.0
 			var rpg_spd = rpg_sys.speed_mult if rpg_sys else 1.0
@@ -573,7 +602,8 @@ func _physics_process(delta: float) -> void:
 				if Input.is_physical_key_pressed(KEY_CTRL) or Input.is_physical_key_pressed(KEY_C) or (pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_B)): vert -= 1.0
 				var target_v = (fly_r * raw_d.x + fly_f * (-raw_d.y) + Vector3.UP * vert) * fly_spd
 				player.velocity = player.velocity.lerp(target_v, clampf(u_delta * 7.0, 0.0, 1.0))
-				player.move_and_slide()
+				if not noclip_mode:
+					player.move_and_slide()
 				if player.global_position.y < 2.2: player.global_position.y = 2.2
 				if is_ads or raw_d.length() > 0.1:
 					var face_d = cam_f if is_ads else Vector3(player.velocity.x, 0, player.velocity.z)
@@ -588,7 +618,8 @@ func _physics_process(delta: float) -> void:
 				var move_spd = (6.2 if hold_aim else (11.5 if sp else 7.8)) * ov_m * focus_comp
 				player.velocity.x = d.x * move_spd; player.velocity.z = d.z * move_spd
 				player.velocity.y = 0 if player.is_on_floor() else player.velocity.y - 20.0 * delta
-				player.move_and_slide()
+				if not noclip_mode:
+					player.move_and_slide()
 				if is_ads:
 					player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(cam_f.x, cam_f.z), clampf(u_delta * 18.0, 0.0, 1.0))
 				elif d.length() > 0.1:
@@ -598,7 +629,7 @@ func _physics_process(delta: float) -> void:
 	else:
 		Engine.time_scale = 1.0; player_rig.animate(0.0, false, false, delta)
 
-	var aiming_now = (not chat_panel.visible) and (active_veh == null) and ((input_mode == "PS5" and (pad_aim or pad_fire)) or touch_hud.hold_fire or touch_hud.hold_focus or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)))
+	var aiming_now = (not chat_panel.visible) and (not (planet_chat and planet_chat.panel.visible)) and (active_veh == null) and ((input_mode == "PS5" and pad_aim) or touch_hud.hold_aim or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)))
 	ots_cam.update_cam(delta, active_veh if active_veh else player, active_veh != null, aiming_now)
 	if crosshair:
 		var show_xh = (not chat_panel.visible) and (active_veh == null) and (aiming_now or (input_mode == "PC" and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED))
@@ -668,6 +699,10 @@ func _cycle_input_mode() -> void:
 	_set_input_mode(nxt)
 
 func _set_input_mode(mode: String) -> void:
+	if touch_hud:
+		touch_hud.visible = true
+		touch_hud.input_mode = mode
+		touch_hud.queue_redraw()
 	input_mode = mode
 	if touch_hud: touch_hud.set_input_mode(mode)
 	if ots_cam: ots_cam.input_mode = mode
@@ -710,6 +745,12 @@ func _sync_rift_atmosphere() -> void:
 	var h_on = (hellfire_mgr != null and hellfire_mgr.active)
 	var a_on = (abyss_mgr != null and abyss_mgr.active)
 	world_env.volumetric_fog_enabled = false
+	if world_env and world_env.sky:
+		if a_on and space_sky_mat:
+			world_env.sky.sky_material = space_sky_mat
+			space_sky_mat.set_shader_parameter("hellfire_blend", 1.0 if h_on else 0.0)
+		else:
+			world_env.sky.sky_material = sky_mat
 	if h_on and a_on:
 		world_env.fog_enabled = true; world_env.fog_density = 0.009; world_env.fog_light_color = Color(0.46, 0.12, 0.24)
 		world_env.glow_intensity = 1.25; world_env.glow_bloom = 0.38; world_env.ambient_light_energy = 0.80
@@ -740,3 +781,55 @@ func _set_uap_form(state: bool) -> void:
 	if uap_form: uap_form.visible = is_uap_form
 	if audio_mgr: audio_mgr.play_chime()
 	_toast("BIBLICAL UAP FORM ENGAGED! 2.35x Warp Speed — Engage Hostile UAP Fleet & Moon!" if is_uap_form else "Returned to Human Flight Form.")
+
+func _open_planet_discourse() -> void:
+	if cosmos_mgr == null or planet_chat == null: return
+	var p = cosmos_mgr.get_nearest_inhabited()
+	if p.is_empty():
+		_toast("No inhabited worlds yet! Fly near a planet and press [Z] to Seed Life first.")
+		return
+	planet_chat.open_for_planet(p, CosmosManager.STAGE_NAMES[p["stage"]])
+	Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+
+func _on_discourse_impact(pn: String, dt: float, df: float, ds: float, note: String) -> void:
+	if cosmos_mgr:
+		cosmos_mgr.apply_discourse_impact(pn, dt, df, ds, note)
+
+func _on_planet_chat_closed() -> void:
+	if input_mode == "PC":
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _toggle_noclip() -> void:
+	noclip_mode = not noclip_mode
+	if player:
+		if noclip_mode:
+			_saved_col_mask = player.collision_mask
+			_saved_col_layer = player.collision_layer
+			player.collision_mask = 0
+			player.collision_layer = 0
+			player.global_position.y += 3.5
+			player.velocity = Vector3.ZERO
+		else:
+			player.collision_mask = _saved_col_mask
+			player.collision_layer = _saved_col_layer
+	if touch_hud:
+		touch_hud.noclip_enabled = noclip_mode
+		touch_hud.queue_redraw()
+	_toast("NO-CLIP ON: Free Ghost Flight (WASD + Space/Ctrl + Shift)" if noclip_mode else "NO-CLIP OFF: Collisions Restored")
+
+func _step_noclip(u_delta: float) -> void:
+	var fwd := -cam.global_transform.basis.z if cam else Vector3.FORWARD
+	var right := cam.global_transform.basis.x if cam else Vector3.RIGHT
+	var mv := Vector3.ZERO
+	if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_UP): mv += fwd
+	if Input.is_physical_key_pressed(KEY_S) or Input.is_physical_key_pressed(KEY_DOWN): mv -= fwd
+	if Input.is_physical_key_pressed(KEY_D) or Input.is_physical_key_pressed(KEY_RIGHT): mv += right
+	if Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_LEFT): mv -= right
+	if Input.is_physical_key_pressed(KEY_SPACE): mv.y += 1.0
+	if Input.is_physical_key_pressed(KEY_CTRL): mv.y -= 1.0
+	if touch_hud and touch_hud.move_vec.length() > 0.1:
+		mv += fwd * (-touch_hud.move_vec.y) + right * touch_hud.move_vec.x
+	var spd := 95.0 if Input.is_physical_key_pressed(KEY_SHIFT) else 38.0
+	if mv.length() > 0.01:
+		player.global_position += mv.normalized() * spd * u_delta
+	player.velocity = Vector3.ZERO

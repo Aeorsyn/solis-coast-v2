@@ -7,6 +7,7 @@ var fx_root: Node3D
 var p_stars: GPUParticles3D
 var p_shards: GPUParticles3D
 var p_nebula: GPUParticles3D
+var p_dust: GPUParticles3D
 var light_a: OmniLight3D
 var light_b: OmniLight3D
 var moon_body: StaticBody3D = null
@@ -103,6 +104,22 @@ func setup(desktop_mode: bool) -> void:
 	nb_mat.emission_enabled = true; nb_mat.emission = Color(0.48, 0.16, 1.0); nb_mat.emission_energy_multiplier = 3.2
 	nb_mesh.material = nb_mat; p_nebula.draw_pass_1 = nb_mesh; fx_root.add_child(p_nebula)
 
+	# 4. Luminous Golden/Cyan Cosmic Stardust Drift Layer
+	p_dust = GPUParticles3D.new()
+	p_dust.amount = 240 if is_desktop else 95; p_dust.lifetime = 3.6; p_dust.emitting = false
+	p_dust.visibility_aabb = AABB(Vector3(-70, -70, -70), Vector3(140, 140, 140))
+	var du_pm = ParticleProcessMaterial.new()
+	du_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	du_pm.emission_box_extents = Vector3(38.0, 28.0, 38.0)
+	du_pm.gravity = Vector3.ZERO; du_pm.spread = 180.0
+	du_pm.initial_velocity_min = 0.6; du_pm.initial_velocity_max = 2.8
+	p_dust.process_material = du_pm
+	var du_mesh = SphereMesh.new(); du_mesh.radius = 0.055; du_mesh.height = 0.11; du_mesh.radial_segments = 5; du_mesh.rings = 3
+	var du_mat = StandardMaterial3D.new(); du_mat.albedo_color = Color(1.0, 0.88, 0.55)
+	du_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	du_mat.emission_enabled = true; du_mat.emission = Color(1.0, 0.80, 0.35); du_mat.emission_energy_multiplier = 7.2
+	du_mesh.material = du_mat; p_dust.draw_pass_1 = du_mesh; fx_root.add_child(p_dust)
+
 	light_a = OmniLight3D.new(); light_a.light_color = Color(0.22, 0.85, 1.0); light_a.omni_range = 28.0; light_a.light_energy = 4.2
 	light_b = OmniLight3D.new(); light_b.light_color = Color(0.72, 0.18, 1.0); light_b.omni_range = 26.0; light_b.light_energy = 3.8
 	fx_root.add_child(light_a); fx_root.add_child(light_b)
@@ -165,7 +182,7 @@ func _init_cached_assets() -> void:
 func set_active(state: bool, env: Environment, sky: ProceduralSkyMaterial, sun: DirectionalLight3D, focus_pos: Vector3) -> void:
 	active = state
 	fx_root.visible = active
-	p_stars.emitting = active; p_shards.emitting = active; p_nebula.emitting = active
+	p_stars.emitting = active; p_shards.emitting = active; p_nebula.emitting = active; if p_dust: p_dust.emitting = active
 
 	if active:
 		if moon_body:

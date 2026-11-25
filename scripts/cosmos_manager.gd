@@ -12,25 +12,33 @@ const STAGE_NAMES = [
 
 var active := false
 var planets: Array[Dictionary] = []
+var stars: Array[Dictionary] = []
 var beams: Array[Dictionary] = []
 var war_fleets: Array[Dictionary] = []
+var signal_rings: Array[Dictionary] = []
 
 # Pooled GPU-instanced Katamari debris (chunks + mote dust = 2 draw calls total)
-const MAX_CHUNKS := 240
-const MAX_MOTES  := 360
+const MAX_CHUNKS := 900
+const MAX_MOTES  := 1400
 var mm_chunks: MultiMeshInstance3D
 var mm_motes: MultiMeshInstance3D
 var debris_chunks: Array[Dictionary] = []
 var debris_motes: Array[Dictionary] = []
 
-var stored_mass := 0.0 # 0.0 to 100.0 (100 = full planet core ready to spit out)
+var stored_mass := 0.0
 var nearest_idx := -1
 var nearest_dist := 99999.0
+
+# Incoming Civilization Communication State
+var active_comm: Dictionary = {}
 
 # HUD Elements
 var hud_layer: CanvasLayer
 var planet_bar: Label
 var mass_bar: Label
+var comm_panel: PanelContainer
+var comm_hdr: Label
+var comm_body: Label
 var chron_panel: PanelContainer
 var chron_title: Label
 var chron_stats: Label
@@ -45,14 +53,67 @@ func setup() -> void:
 	visible = false
 	hud_layer.visible = false
 
+	# 8 Diverse Planet Types (Terran, Desert, Ocean, Volcanic, Ringed Gas Giant, Storm Gas Giant, Ice Giant, Cryo)
 	var specs = [
-		{"name": "AETHELGARD", "offset": Vector3(-240, 195, -180), "r": 34.0, "seed": 1.4, "land": Color(0.16, 0.48, 0.18), "ocean": Color(0.04, 0.26, 0.58), "atmo": Color(0.28, 0.76, 1.0)},
-		{"name": "KHEPRI",     "offset": Vector3( 250, 215, -210), "r": 30.0, "seed": 4.2, "land": Color(0.68, 0.50, 0.26), "ocean": Color(0.06, 0.36, 0.48), "atmo": Color(1.00, 0.72, 0.32)},
-		{"name": "THALASSA",   "offset": Vector3(-180, 290,  220), "r": 38.0, "seed": 7.8, "land": Color(0.14, 0.54, 0.36), "ocean": Color(0.02, 0.18, 0.52), "atmo": Color(0.18, 0.92, 0.82)},
-		{"name": "VULCANIS",   "offset": Vector3( 220, 260,  210), "r": 28.0, "seed": 9.5, "land": Color(0.42, 0.28, 0.22), "ocean": Color(0.14, 0.22, 0.38), "atmo": Color(0.95, 0.42, 0.28)}
+		{"name": "AETHELGARD", "kind": "TERRAN WORLD",    "emissary": "Archivist Lyra",    "persona": "Curious & Philosophical",    "greeting": "Wheels of golden fire, our observatories have awaited your voice. What truths do you bring to Aethelgard?", "ptype": 0, "rings": false, "offset": Vector3(-230, 195, -180), "r": 34.0, "seed": 1.4, "land": Color(0.16, 0.48, 0.18), "ocean": Color(0.04, 0.26, 0.58), "atmo": Color(0.28, 0.76, 1.0)},
+		{"name": "KHEPRI",     "kind": "DESERT WORLD",    "emissary": "Pharaoh Amenhotep", "persona": "Monumental & Devout",        "greeting": "Great Chariot of Eyes! Tell us the sacred ratios so our pyramids may touch your orbit!", "ptype": 0, "rings": false, "offset": Vector3( 245, 210, -205), "r": 30.0, "seed": 4.2, "land": Color(0.72, 0.52, 0.26), "ocean": Color(0.06, 0.36, 0.48), "atmo": Color(1.00, 0.72, 0.32)},
+		{"name": "THALASSA",   "kind": "OCEAN WORLD",     "emissary": "Tide-Oracle Nerissa","persona": "Poetic & Pacifist",         "greeting": "Your golden reflection ripples across our endless seas. Speak softly, luminous one—our oceans listen.", "ptype": 0, "rings": false, "offset": Vector3(-190, 285,  215), "r": 36.0, "seed": 7.8, "land": Color(0.14, 0.54, 0.38), "ocean": Color(0.02, 0.16, 0.54), "atmo": Color(0.16, 0.94, 0.85)},
+		{"name": "VULCANIS",   "kind": "VOLCANIC WORLD",  "emissary": "Forgemaster Kael",  "persona": "Fierce & Ambitious",         "greeting": "We forged cities from magma without fear! Grant us star-fire weapons, or watch us claim the void ourselves!", "ptype": 0, "rings": false, "offset": Vector3( 220, 255,  205), "r": 28.0, "seed": 9.5, "land": Color(0.42, 0.22, 0.18), "ocean": Color(0.22, 0.08, 0.06), "atmo": Color(1.00, 0.40, 0.18)},
+		{"name": "JOVIAN-IX",  "kind": "RINGED GAS GIANT","emissary": "Sky-Captain Vael",  "persona": "Bold Cloud-Barons",          "greeting": "Ahoy, spinning halo! Our floating aerostats rode the red cyclone just to hail you—what lies beyond our rings?", "ptype": 1, "rings": true,  "offset": Vector3(-430, 290, -340), "r": 54.0, "seed": 2.9, "land": Color(0.84, 0.66, 0.44), "ocean": Color(0.58, 0.34, 0.22), "atmo": Color(0.95, 0.76, 0.48)},
+		{"name": "TEMPESTUS",  "kind": "STORM GAS GIANT", "emissary": "The Storm-Choir",   "persona": "Electric Hive-Mind",         "greeting": "WE SING IN LIGHTNING. YOUR EYES PULSE ON OUR FREQUENCY. SPEAK TO THE CHOIR OF TEMPESTUS.", "ptype": 1, "rings": false, "offset": Vector3( 450, 320, -300), "r": 48.0, "seed": 6.1, "land": Color(0.32, 0.44, 0.78), "ocean": Color(0.16, 0.18, 0.46), "atmo": Color(0.48, 0.68, 1.00)},
+		{"name": "GLACIES",    "kind": "ICE GIANT",       "emissary": "Logician Solon",    "persona": "Skeptical & Analytical",     "greeting": "Anomalous toroidal craft detected. State your propulsion physics—we do not worship what we have not measured.", "ptype": 2, "rings": true,  "offset": Vector3(-390, 350,  360), "r": 42.0, "seed": 3.3, "land": Color(0.55, 0.88, 0.96), "ocean": Color(0.12, 0.42, 0.68), "atmo": Color(0.38, 0.92, 1.00)},
+		{"name": "EREBUS",     "kind": "CRYO WORLD",      "emissary": "Deep-Seer Moros",   "persona": "Mystical & Prophetic",       "greeting": "Beneath miles of frozen crust, our ancestors dreamed of your burning wheels. Has the Great Thaw finally arrived?", "ptype": 2, "rings": false, "offset": Vector3( 390, 330,  350), "r": 31.0, "seed": 8.4, "land": Color(0.76, 0.82, 0.92), "ocean": Color(0.16, 0.22, 0.42), "atmo": Color(0.68, 0.56, 1.00)}
 	]
 	for sp in specs:
 		_create_planet(sp)
+
+	# 4 Distinct Star Types orbiting the outer cosmos (White Dwarf, Red Giant, Blue Supergiant, Neutron Pulsar)
+	var star_specs = [
+		{"name": "SIRIUS-B (WHITE DWARF)",      "offset": Vector3(   0, 440, -560), "r": 16.0, "core": Color(0.92, 0.98, 1.00), "flare": Color(0.45, 0.82, 1.00), "pulsar": false, "energy": 9.5},
+		{"name": "BETEL-PRIME (RED GIANT)",     "offset": Vector3(-620, 460,  -40), "r": 74.0, "core": Color(1.00, 0.55, 0.16), "flare": Color(0.95, 0.14, 0.04), "pulsar": false, "energy": 5.5},
+		{"name": "RIGEL-X (BLUE SUPERGIANT)",   "offset": Vector3( 620, 480,   40), "r": 46.0, "core": Color(0.78, 0.92, 1.00), "flare": Color(0.16, 0.46, 1.00), "pulsar": false, "energy": 8.0},
+		{"name": "VELA-0 (NEUTRON PULSAR)",     "offset": Vector3(   0, 500,  580), "r": 12.0, "core": Color(0.88, 0.96, 1.00), "flare": Color(0.62, 0.28, 1.00), "pulsar": true,  "energy": 10.5}
+	]
+	for ss in star_specs:
+		_create_star(ss)
+
+func _create_star(ss: Dictionary) -> void:
+	var root = Node3D.new(); add_child(root)
+	var sph = SphereMesh.new(); sph.radius = ss["r"]; sph.height = ss["r"] * 2.0; sph.radial_segments = 28; sph.rings = 14
+	var mat = ShaderMaterial.new(); mat.shader = load("res://shaders/stellar_star.gdshader")
+	mat.set_shader_parameter("core_color", ss["core"])
+	mat.set_shader_parameter("flare_color", ss["flare"])
+	mat.set_shader_parameter("energy", ss["energy"])
+	sph.material = mat
+	var mi = MeshInstance3D.new(); mi.mesh = sph; mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(mi)
+
+	var l = OmniLight3D.new(); l.light_color = ss["core"]; l.light_energy = 7.0; l.omni_range = 380.0
+	root.add_child(l)
+
+	var lbl = Label3D.new(); lbl.text = ss["name"]
+	lbl.position = Vector3(0, ss["r"] + 18.0, 0); lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lbl.font_size = 110; lbl.pixel_size = 0.10; lbl.modulate = ss["core"]
+	root.add_child(lbl)
+
+	# Relativistic Polar Jets for Neutron Pulsar
+	var jet_piv: Node3D = null
+	if ss["pulsar"]:
+		jet_piv = Node3D.new(); root.add_child(jet_piv)
+		var jmat = StandardMaterial3D.new(); jmat.albedo_color = Color(0.55, 0.92, 1.0)
+		jmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED; jmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		jmat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD; jmat.emission_enabled = true
+		jmat.emission = Color(0.45, 0.85, 1.0); jmat.emission_energy_multiplier = 8.0
+		var cone = CylinderMesh.new(); cone.top_radius = 16.0; cone.bottom_radius = 1.4; cone.height = 175.0; cone.radial_segments = 12
+		cone.material = jmat
+		for sy in [-1.0, 1.0]:
+			var jm = MeshInstance3D.new(); jm.mesh = cone; jm.position = Vector3(0, sy * 92.0, 0)
+			if sy < 0.0: jm.rotation_degrees.x = 180.0
+			jm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			jet_piv.add_child(jm)
+		jet_piv.rotation_degrees = Vector3(26, 0, 18)
+
+	stars.append({"root": root, "offset": ss["offset"], "pulsar": ss["pulsar"], "jet_piv": jet_piv})
 
 func _init_debris_pools() -> void:
 	var c_mesh = PrismMesh.new(); c_mesh.size = Vector3(2.4, 2.8, 2.0)
@@ -62,7 +123,7 @@ func _init_debris_pools() -> void:
 	c_mesh.material = c_mat
 	var mmc = MultiMesh.new(); mmc.transform_format = MultiMesh.TRANSFORM_3D; mmc.use_colors = true
 	mmc.mesh = c_mesh; mmc.instance_count = MAX_CHUNKS; mmc.visible_instance_count = 0
-	mm_chunks = MultiMeshInstance3D.new(); mm_chunks.multimesh = mmc; mm_chunks.extra_cull_margin = 500.0
+	mm_chunks = MultiMeshInstance3D.new(); mm_chunks.multimesh = mmc; mm_chunks.extra_cull_margin = 1200.0
 	mm_chunks.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mm_chunks)
 
@@ -72,7 +133,7 @@ func _init_debris_pools() -> void:
 	m_mesh.material = m_mat
 	var mmm = MultiMesh.new(); mmm.transform_format = MultiMesh.TRANSFORM_3D; mmm.use_colors = true
 	mmm.mesh = m_mesh; mmm.instance_count = MAX_MOTES; mmm.visible_instance_count = 0
-	mm_motes = MultiMeshInstance3D.new(); mm_motes.multimesh = mmm; mm_motes.extra_cull_margin = 500.0
+	mm_motes = MultiMeshInstance3D.new(); mm_motes.multimesh = mmm; mm_motes.extra_cull_margin = 1200.0
 	mm_motes.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mm_motes)
 
@@ -83,13 +144,14 @@ func _create_planet(sp: Dictionary) -> void:
 
 	var mat = ShaderMaterial.new()
 	mat.shader = load("res://shaders/living_planet.gdshader")
+	mat.set_shader_parameter("planet_type", sp["ptype"])
 	mat.set_shader_parameter("planet_seed", sp["seed"])
 	mat.set_shader_parameter("land_color", sp["land"])
 	mat.set_shader_parameter("ocean_color", sp["ocean"])
 	mat.set_shader_parameter("atmo_color", sp["atmo"])
 
 	var sph = SphereMesh.new()
-	sph.radius = sp["r"]; sph.height = sp["r"] * 2.0; sph.radial_segments = 36; sph.rings = 18
+	sph.radius = sp["r"]; sph.height = sp["r"] * 2.0; sph.radial_segments = 40; sph.rings = 20
 	sph.material = mat
 	var mi = MeshInstance3D.new(); mi.mesh = sph; mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	body.add_child(mi)
@@ -97,15 +159,47 @@ func _create_planet(sp: Dictionary) -> void:
 	var col = CollisionShape3D.new(); var cs = SphereShape3D.new(); cs.radius = sp["r"]
 	col.shape = cs; body.add_child(col)
 
+	# Natural Saturn-style Planetary Dust/Ice Rings for Gas & Ice Giants
+	if sp["rings"]:
+		var pr_piv = Node3D.new(); pr_piv.rotation_degrees = Vector3(22, 0, -14); body.add_child(pr_piv)
+		for band_i in 2:
+			var r_in = sp["r"] * (1.35 if band_i == 0 else 1.72)
+			var r_out = sp["r"] * (1.66 if band_i == 0 else 2.02)
+			var ptor = TorusMesh.new(); ptor.inner_radius = r_in; ptor.outer_radius = r_out; ptor.rings = 40; ptor.ring_segments = 6
+			var pmat = StandardMaterial3D.new()
+			var rc: Color = sp["atmo"].lerp(Color(0.95, 0.88, 0.72), 0.45)
+			pmat.albedo_color = Color(rc.r, rc.g, rc.b, 0.58 if band_i == 0 else 0.36)
+			pmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; pmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			pmat.emission_enabled = true; pmat.emission = rc; pmat.emission_energy_multiplier = 0.45
+			ptor.material = pmat
+			var pmi = MeshInstance3D.new(); pmi.mesh = ptor; pmi.scale = Vector3(1.0, 0.04, 1.0)
+			pmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			pr_piv.add_child(pmi)
+
 	var lbl = Label3D.new()
-	lbl.text = "%s\n[BARREN — FLY NEAR & PRESS Z TO SEED]" % sp["name"]
-	lbl.position = Vector3(0, sp["r"] + 12.0, 0)
+	lbl.text = "%s (%s)\n[BARREN — PRESS Z TO SEED]" % [sp["name"], sp["kind"]]
+	lbl.position = Vector3(0, sp["r"] + 13.0, 0)
 	lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	lbl.font_size = 96; lbl.pixel_size = 0.08
-	lbl.modulate = Color(0.85, 0.94, 1.0)
+	lbl.modulate = Color(0.86, 0.95, 1.0)
 	body.add_child(lbl)
 
-	# Type 2 Orbital Dyson Ring (Tech >= 3000)
+	# Visible Orbiting Civilization Emissary Probes / Ships (appear as soon as life is seeded!)
+	var fleet_piv = Node3D.new(); fleet_piv.visible = false; body.add_child(fleet_piv)
+	var sh_m = PrismMesh.new(); sh_m.size = Vector3(1.8, 3.6, 1.2)
+	var sh_mat = StandardMaterial3D.new(); sh_mat.albedo_color = Color.WHITE; sh_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	sh_mat.emission_enabled = true; sh_mat.emission = sp["atmo"]; sh_mat.emission_energy_multiplier = 6.5
+	sh_m.material = sh_mat
+	for fi in 8:
+		var fa = TAU * float(fi) / 8.0
+		var fr = sp["r"] * (1.18 + float(fi % 3) * 0.08)
+		var fmi = MeshInstance3D.new(); fmi.mesh = sh_m
+		fmi.position = Vector3(cos(fa) * fr, sin(fa * 2.0) * (sp["r"] * 0.28), sin(fa) * fr)
+		fmi.rotation_degrees = Vector3(0, rad_to_deg(-fa), 90)
+		fmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		fleet_piv.add_child(fmi)
+
+	# Type 2 Orbital Dyson Ring
 	var ring_piv = Node3D.new(); ring_piv.visible = false; body.add_child(ring_piv)
 	var tor = TorusMesh.new(); tor.inner_radius = sp["r"] * 1.32; tor.outer_radius = sp["r"] * 1.40; tor.rings = 32; tor.ring_segments = 8
 	var rmat = StandardMaterial3D.new(); rmat.albedo_color = Color(1.0, 0.85, 0.35); rmat.metallic = 0.9; rmat.roughness = 0.2
@@ -114,7 +208,7 @@ func _create_planet(sp: Dictionary) -> void:
 	var rmi = MeshInstance3D.new(); rmi.mesh = tor; rmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	rmi.rotation_degrees = Vector3(18, 0, 12); ring_piv.add_child(rmi)
 
-	# Type 1 Forged Artificial Star (Tech >= 5000)
+	# Type 1 Forged Artificial Star
 	var star_piv = Node3D.new(); star_piv.visible = false; body.add_child(star_piv)
 	var star_m = SphereMesh.new(); star_m.radius = 6.5; star_m.height = 13.0; star_m.radial_segments = 16; star_m.rings = 8
 	var smat = StandardMaterial3D.new(); smat.albedo_color = Color(1.0, 0.98, 0.86); smat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -125,7 +219,7 @@ func _create_planet(sp: Dictionary) -> void:
 	var slight = OmniLight3D.new(); slight.light_color = Color(1.0, 0.92, 0.65); slight.light_energy = 8.0; slight.omni_range = 160.0
 	smi.add_child(slight)
 
-	# Space Megalithic Architecture (Tech >= 5000 + Faith >= 70%: Orbiting Cosmic Pyramids, Obelisks & Astral Gates)
+	# Space Megalithic Architecture (Tech >= 5000 + Faith >= 70%)
 	var mega_piv = Node3D.new(); mega_piv.visible = false; mega_piv.scale = Vector3.ONE * 0.05; body.add_child(mega_piv)
 	var gold_stone = StandardMaterial3D.new()
 	gold_stone.albedo_color = Color(0.14, 0.12, 0.16); gold_stone.metallic = 0.78; gold_stone.roughness = 0.22
@@ -147,7 +241,6 @@ func _create_planet(sp: Dictionary) -> void:
 		m_inst.position = pos; m_inst.rotation_degrees = Vector3(0, rad_to_deg(-ang), 18 if k % 2 == 0 else -12)
 		m_inst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		mega_piv.add_child(m_inst)
-
 		if k == 0 or k == 2:
 			var g_inst = MeshInstance3D.new(); g_inst.mesh = arch_m
 			g_inst.position = pos + Vector3(0, 12.0, 0); g_inst.rotation_degrees = Vector3(90, rad_to_deg(-ang), 0)
@@ -155,14 +248,16 @@ func _create_planet(sp: Dictionary) -> void:
 			mega_piv.add_child(g_inst)
 
 	planets.append({
-		"name": sp["name"], "offset": sp["offset"], "r": sp["r"], "atmo": sp["atmo"], "land": sp["land"],
+		"name": sp["name"], "kind": sp["kind"], "emissary": sp["emissary"], "persona": sp["persona"], "greeting": sp["greeting"], "ptype": sp["ptype"], "fleet_piv": fleet_piv,
+		"offset": sp["offset"], "r": sp["r"], "atmo": sp["atmo"], "land": sp["land"],
 		"body": body, "col": col, "mesh": mi, "mat": mat, "label": lbl,
 		"ring_piv": ring_piv, "star_piv": star_piv, "mega_piv": mega_piv,
 		"shattered": false, "reform_scale": 1.0, "megalith_built": false,
 		"stage": 0, "year": 0.0, "pop": 0.0, "tech": 0.0, "faith": 0.0, "stability": 100.0,
 		"life_v": 0.0, "civ_v": 0.0, "ruin_v": 0.0,
 		"sighting_cd": 0.0, "crisis_cd": 16.0, "war_cd": randf_range(6.0, 12.0),
-		"history": ["World lies silent and barren in the Abyss."]
+		"comm_cd": randf_range(9.0, 18.0),
+		"history": ["%s (%s) drifts silent in the Abyss." % [sp["name"], sp["kind"]]]
 	})
 
 func _build_hud() -> void:
@@ -170,18 +265,38 @@ func _build_hud() -> void:
 
 	planet_bar = Label.new()
 	planet_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	planet_bar.offset_left = 18; planet_bar.offset_top = -134; planet_bar.offset_right = 860; planet_bar.offset_bottom = -92
+	planet_bar.offset_left = 18; planet_bar.offset_top = -134; planet_bar.offset_right = 880; planet_bar.offset_bottom = -92
 	planet_bar.add_theme_font_size_override("font_size", 15)
 	planet_bar.modulate = Color(0.55, 0.96, 1.0)
 	hud_layer.add_child(planet_bar)
 
 	mass_bar = Label.new()
 	mass_bar.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	mass_bar.offset_left = 18; mass_bar.offset_top = -104; mass_bar.offset_right = 860; mass_bar.offset_bottom = -70
+	mass_bar.offset_left = 18; mass_bar.offset_top = -104; mass_bar.offset_right = 880; mass_bar.offset_bottom = -70
 	mass_bar.add_theme_font_size_override("font_size", 14)
 	mass_bar.modulate = Color(1.0, 0.84, 0.35)
 	hud_layer.add_child(mass_bar)
 
+	# Top-Center Incoming Civilization Communication Transceiver
+	comm_panel = PanelContainer.new()
+	comm_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	comm_panel.offset_left = -335; comm_panel.offset_right = 335; comm_panel.offset_top = 66; comm_panel.offset_bottom = 178
+	var csb = StyleBoxFlat.new()
+	csb.bg_color = Color(0.03, 0.06, 0.14, 0.92); csb.border_color = Color(0.28, 0.96, 1.0, 0.92)
+	csb.set_border_width_all(2); csb.set_corner_radius_all(10)
+	csb.content_margin_left = 14; csb.content_margin_right = 14; csb.content_margin_top = 10; csb.content_margin_bottom = 10
+	comm_panel.add_theme_stylebox_override("panel", csb)
+	comm_panel.visible = false; comm_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud_layer.add_child(comm_panel)
+
+	var cvb = VBoxContainer.new(); cvb.add_theme_constant_override("separation", 4); comm_panel.add_child(cvb)
+	comm_hdr = Label.new(); comm_hdr.add_theme_font_size_override("font_size", 15); comm_hdr.modulate = Color(1.0, 0.88, 0.38); cvb.add_child(comm_hdr)
+	comm_body = Label.new(); comm_body.add_theme_font_size_override("font_size", 13); comm_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART; cvb.add_child(comm_body)
+	var comm_hint = Label.new()
+	comm_hint.text = "[Y] Reveal & Guide (+Tech +Faith)  |  [T] Cryptic Prophecy (++Faith)  |  [P] Remain Silent (+Science)"
+	comm_hint.add_theme_font_size_override("font_size", 12); comm_hint.modulate = Color(0.45, 0.98, 1.0); cvb.add_child(comm_hint)
+
+	# Toggleable [H] Cosmic Chronicle Panel
 	chron_panel = PanelContainer.new()
 	chron_panel.set_anchors_preset(Control.PRESET_CENTER_LEFT)
 	chron_panel.offset_left = 18; chron_panel.offset_top = -230; chron_panel.offset_right = 445; chron_panel.offset_bottom = 230
@@ -207,6 +322,8 @@ func set_active(state: bool, origin: Vector3) -> void:
 		for p in planets:
 			if not p["shattered"]:
 				p["body"].global_position = Vector3(origin.x, 0.0, origin.z) + p["offset"]
+		for st in stars:
+			st["root"].global_position = Vector3(origin.x, 0.0, origin.z) + st["offset"]
 
 func toggle_chronicle() -> void:
 	chron_panel.visible = not chron_panel.visible
@@ -233,6 +350,72 @@ func _spawn_beam(from_p: Vector3, to_p: Vector3, col: Color, width := 2.8) -> vo
 	mi.rotate_object_local(Vector3.RIGHT, PI * 0.5)
 	beams.append({"node": mi, "t": 0.95})
 
+func _spawn_signal_ring(origin: Vector3, target: Vector3, col: Color) -> void:
+	var mi = MeshInstance3D.new()
+	var tor = TorusMesh.new(); tor.inner_radius = 8.0; tor.outer_radius = 9.4; tor.rings = 24; tor.ring_segments = 6
+	var mat = StandardMaterial3D.new(); mat.albedo_color = col; mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 6.5
+	tor.material = mat; mi.mesh = tor; mi.global_position = origin
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	mi.look_at(target, Vector3.UP); mi.rotate_object_local(Vector3.RIGHT, PI * 0.5)
+	var dir = (target - origin).normalized()
+	signal_rings.append({"node": mi, "vel": dir * 75.0, "t": 2.4})
+
+func _trigger_comm_attempt(p_idx: int, player_pos: Vector3) -> void:
+	var p = planets[p_idx]
+	var st: int = p["stage"]
+	var hdr := ""
+	var body := ""
+	match st:
+		1:
+			hdr = "CONTACT SIGNAL — %s (TYPE 5: BONFIRE GEOMETRY)" % p["name"]
+			body = "Tribes carved colossal Nazca-style eye-wheels into the plains and lit mile-wide signal fires chanting to the sky."
+		2:
+			hdr = "CONTACT SIGNAL — %s (TYPE 4: SKY-TEMPLE ALIGNMENT)" % p["name"]
+			body = "High priests aligned polished bronze mirrors atop their Great Pyramid to flash prime-ratio light pulses toward your UAP."
+		3:
+			hdr = "ARECIBO RADIO HAIL — %s (TYPE 3: BINARY TRANSMISSION)" % p["name"]
+			body = "Radio telescopes beamed '2, 3, 5, 7, 11, 13...' plus a Golden Record greeting: 'We see your Wheels on radar. Are we alone?'"
+		4:
+			hdr = "LASER INTERFEROMETER HAIL — %s (TYPE 2: DYSON ARRAY)" % p["name"]
+			body = "Orbital Ring relays locked onto your signature: 'Architect of Eyes, share the ignition harmonic so we may forge our own Star.'"
+		5:
+			hdr = "GRAVITATIONAL COMMUNION — %s (TYPE 1: STAR-FORGERS)" % p["name"]
+			body = "Their artificial sun hums in resonance with your rings: 'We have transcended dependency. Shall we seed the next galaxy together?'"
+
+	active_comm = {"p_idx": p_idx, "timer": 22.0, "hdr": hdr}
+	comm_hdr.text = hdr
+	comm_body.text = body
+	comm_panel.visible = true
+	_spawn_signal_ring(p["body"].global_position, player_pos, Color(0.25, 0.96, 1.0))
+	_record(p, "TRANSMISSION SENT TO UAP: " + hdr, false)
+
+func respond_comm(choice: String, player_pos: Vector3) -> void:
+	if active_comm.is_empty(): return
+	var p = planets[active_comm["p_idx"]]
+	active_comm.clear()
+	comm_panel.visible = false
+	if p["shattered"] or p["stage"] == 0: return
+
+	var target: Vector3 = p["body"].global_position
+	match choice:
+		"reveal":
+			_spawn_beam(player_pos, target, Color(1.0, 0.90, 0.35), 3.6)
+			p["tech"] += 420.0; p["faith"] = minf(100.0, p["faith"] + 22.0); p["stability"] = minf(100.0, p["stability"] + 25.0)
+			_record(p, "UAP RESPONDED WITH REVELATION! Golden harmonic wave decoded (+420 Tech, +22% Faith, Peace restored).")
+			reward_granted.emit(450, 85, false)
+		"riddle":
+			_spawn_beam(player_pos, target, Color(0.74, 0.28, 1.0), 3.2)
+			p["faith"] = minf(100.0, p["faith"] + 36.0); p["tech"] += 180.0
+			_record(p, "UAP ANSWERED IN CRYPTIC PROPHECY! Scholars debate your sacred geometry for centuries (+36% Faith).")
+			reward_granted.emit(350, 70, false)
+		"silence":
+			p["tech"] += 260.0; p["faith"] = maxf(0.0, p["faith"] - 14.0)
+			_record(p, "UAP REMAINED SILENT! Determined to prove themselves, scientists double down on independent tech (+260 Tech).")
+			reward_granted.emit(200, 45, false)
+
 func shatter_nearest(player_pos: Vector3) -> void:
 	if not active or nearest_idx < 0: return
 	var p = planets[nearest_idx]
@@ -248,30 +431,28 @@ func shatter_nearest(player_pos: Vector3) -> void:
 	var rad: float = p["r"]
 	_spawn_beam(player_pos, center, Color(1.0, 0.18, 0.04), 5.5)
 
-	# Completely obliterate planet body, rings, star & megaliths
 	p["shattered"] = true; p["stage"] = 0; p["tech"] = 0.0; p["pop"] = 0.0; p["megalith_built"] = false
 	p["body"].visible = false; p["col"].disabled = true
 	p["ring_piv"].visible = false; p["star_piv"].visible = false; p["mega_piv"].visible = false
 
-	# Spawn 60 swirling crustal chunks + 90 glowing mote-dust particles
-	for i in 60:
+	for i in 180:
 		if debris_chunks.size() >= MAX_CHUNKS: debris_chunks.pop_front()
 		var dir = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)).normalized()
 		var col = p["land"].lerp(Color(1.0, 0.35, 0.06), randf() * 0.65)
 		debris_chunks.append({
 			"pos": center + dir * randf_range(4.0, rad * 0.95),
-			"vel": dir * randf_range(12.0, 32.0),
+			"vel": dir * randf_range(14.0, 44.0),
 			"rot": Vector3(randf() * TAU, randf() * TAU, randf() * TAU),
 			"spin": Vector3(randf_range(-2, 2), randf_range(-2, 2), randf_range(-2, 2)),
 			"sc": randf_range(0.7, 2.5), "col": col
 		})
-	for i in 90:
+	for i in 280:
 		if debris_motes.size() >= MAX_MOTES: debris_motes.pop_front()
 		var dir = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)).normalized()
 		var col = p["atmo"].lerp(Color(1.0, 0.85, 0.32), randf() * 0.6)
 		debris_motes.append({
 			"pos": center + dir * randf_range(2.0, rad * 1.1),
-			"vel": dir * randf_range(14.0, 38.0),
+			"vel": dir * randf_range(16.0, 52.0),
 			"sc": randf_range(0.5, 1.8), "col": col
 		})
 
@@ -289,26 +470,24 @@ func reforge_planet(player_pos: Vector3, cam_fwd: Vector3) -> void:
 		if p["shattered"]:
 			target_p = p; break
 	if target_p.is_empty():
-		chronicle_event.emit("All 4 worlds are intact! Shatter a planet [B] first to re-forge it.")
+		chronicle_event.emit("All 8 worlds are intact! Shatter a planet [B] first to re-forge it.")
 		return
 
-	var spawn_pos = player_pos + cam_fwd.normalized() * 88.0
-	spawn_pos.y = maxf(spawn_pos.y, 85.0)
+	var spawn_pos = player_pos + cam_fwd.normalized() * 96.0
+	spawn_pos.y = maxf(spawn_pos.y, 90.0)
 	_spawn_beam(player_pos, spawn_pos, Color(1.0, 0.88, 0.35), 4.2)
 
-	# Spit molten planetary matter out of the UAP core & coalesce into a brand-new world
 	target_p["shattered"] = false
 	target_p["body"].global_position = spawn_pos
 	target_p["body"].visible = true
 	target_p["col"].disabled = false
 	target_p["reform_scale"] = 0.08
 	target_p["mesh"].scale = Vector3.ONE * 0.08
-	target_p["ruin_v"] = 1.0 # Starts molten & cools down
+	target_p["ruin_v"] = 1.0
 	target_p["stage"] = 0; target_p["tech"] = 0.0; target_p["year"] = 0.0; target_p["stability"] = 100.0
 	stored_mass = maxf(0.0, stored_mass - 100.0)
 
-	# Burst of golden coalescing sparks around the newly spit-out planet
-	for i in 28:
+	for i in 85:
 		if debris_motes.size() >= MAX_MOTES: debris_motes.pop_front()
 		var dir = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)).normalized()
 		debris_motes.append({
@@ -327,7 +506,7 @@ func interact_nearest(action: String, player_pos: Vector3) -> void:
 		chronicle_event.emit("%s is shattered! Hold [G] to vacuum its debris, then [N] to rebuild!" % p["name"])
 		return
 	var surf_dist = nearest_dist - float(p["r"])
-	if surf_dist > 155.0:
+	if surf_dist > 165.0:
 		chronicle_event.emit("Fly closer to %s (%dm away) to intervene!" % [p["name"], int(surf_dist)])
 		return
 
@@ -337,7 +516,8 @@ func interact_nearest(action: String, player_pos: Vector3) -> void:
 			_spawn_beam(player_pos, target, Color(0.25, 1.0, 0.55))
 			if p["stage"] == 0:
 				p["stage"] = 1; p["year"] = 1.0; p["pop"] = 1200.0; p["tech"] = 120.0; p["faith"] = 45.0; p["stability"] = 92.0; p["ruin_v"] = 0.0
-				_record(p, "LIFE SEEDED! Oceans condense and first tribes awaken (Type 5).")
+				var bio = "Floating Sky-Colonies" if p["ptype"] == 1 else ("Sub-Ice Bioluminescent Tribes" if p["ptype"] == 2 else "Biosphere & First Tribes")
+				_record(p, "LIFE SEEDED! %s awaken on %s (Type 5)." % [bio, p["name"]])
 				reward_granted.emit(300, 60, false)
 			else:
 				p["tech"] += 480.0; p["stability"] = minf(100.0, p["stability"] + 15.0); p["faith"] = minf(100.0, p["faith"] + 14.0)
@@ -404,10 +584,7 @@ func _launch_war_fleet(attacker: Dictionary, defender: Dictionary) -> void:
 	add_child(mi)
 
 	var mid = (start_p + end_p) * 0.5 + Vector3(0, randf_range(35.0, 75.0), 0)
-	war_fleets.append({
-		"node": mi, "from": start_p, "mid": mid, "to": end_p,
-		"attacker": attacker, "defender": defender, "t": 0.0
-	})
+	war_fleets.append({"node": mi, "from": start_p, "mid": mid, "to": end_p, "attacker": attacker, "defender": defender, "t": 0.0})
 	_record(attacker, "INTERPLANETARY WAR! %s launched orbital strike fleet at %s!" % [attacker["name"], defender["name"]], false)
 	chronicle_event.emit("INTERPLANETARY WAR: %s fired plasma fleet at %s!" % [attacker["name"], defender["name"]])
 
@@ -423,44 +600,58 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 		beams[i]["t"] -= delta
 		if beams[i]["t"] <= 0.0: beams[i]["node"].queue_free(); beams.remove_at(i)
 
+	for i in range(signal_rings.size() - 1, -1, -1):
+		var sr = signal_rings[i]; sr["t"] -= delta
+		sr["node"].global_position += sr["vel"] * delta
+		sr["node"].scale += Vector3.ONE * delta * 1.4
+		if sr["t"] <= 0.0: sr["node"].queue_free(); signal_rings.remove_at(i)
+
 	if not active: return
 
-	# 1. Update Katamari Debris & Mote Dust (swirl in space, vacuum into UAP core when [G] held)
+	# Spin Neutron Pulsar polar jets
+	for st in stars:
+		if st["pulsar"] and st["jet_piv"]:
+			st["jet_piv"].rotate_y(delta * 4.8)
+
+	# Handle Active Incoming Communication Timer
+	if not active_comm.is_empty():
+		active_comm["timer"] -= delta
+		if active_comm["timer"] <= 0.0:
+			respond_comm("silence", player_pos)
+
+	# 1. Update Katamari Debris & Mote Dust
 	for list_idx in 2:
 		var arr: Array[Dictionary] = debris_chunks if list_idx == 0 else debris_motes
 		var mm: MultiMesh = mm_chunks.multimesh if list_idx == 0 else mm_motes.multimesh
-		var mass_gain := 1.45 if list_idx == 0 else 0.72
+		var mass_gain := 0.85 if list_idx == 0 else 0.38
 
 		for i in range(arr.size() - 1, -1, -1):
 			var d = arr[i]
 			var to_uap = player_pos - d["pos"]
 			var dist = to_uap.length()
 
-			if siphon_held and dist < 260.0:
-				# Katamari spiral vortex straight into the UAP core!
+			if siphon_held and dist < 420.0:
 				var pull_dir = to_uap.normalized() if dist > 0.1 else Vector3.UP
 				var swirl = pull_dir.cross(Vector3.UP)
 				if swirl.length() < 0.1: swirl = Vector3.RIGHT
-				var pull_spd = lerpf(155.0, 52.0, clampf(dist / 260.0, 0.0, 1.0))
-				d["vel"] = d["vel"].lerp(pull_dir * pull_spd + swirl.normalized() * (24.0 * clampf(dist / 90.0, 0.0, 1.0)), clampf(delta * 7.5, 0.0, 1.0))
-				if dist < 6.5:
-					stored_mass = minf(100.0, stored_mass + mass_gain)
-					arr.remove_at(i)
-					continue
+				var pull_spd = lerpf(210.0, 75.0, clampf(dist / 420.0, 0.0, 1.0))
+				d["vel"] = d["vel"].lerp(pull_dir * pull_spd + swirl.normalized() * (42.0 * clampf(dist / 120.0, 0.0, 1.0)), clampf(delta * 7.5, 0.0, 1.0))
+				if dist < 8.5:
+					stored_mass = minf(500.0, stored_mass + mass_gain)
+					arr.remove_at(i); continue
 			else:
 				d["vel"] = d["vel"].lerp(Vector3.ZERO, clampf(delta * 0.45, 0.0, 1.0))
 
 			d["pos"] += d["vel"] * delta
 			if list_idx == 0:
 				d["rot"] += d["spin"] * delta
-				var b = Basis.from_euler(d["rot"]).scaled(Vector3.ONE * d["sc"])
-				mm.set_instance_transform(i, Transform3D(b, d["pos"]))
+				mm.set_instance_transform(i, Transform3D(Basis.from_euler(d["rot"]).scaled(Vector3.ONE * d["sc"]), d["pos"]))
 			else:
 				mm.set_instance_transform(i, Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * d["sc"]), d["pos"]))
 			mm.set_instance_color(i, d["col"])
 		mm.visible_instance_count = arr.size()
 
-	# 2. Update Interplanetary War Fleets arcing between planets
+	# 2. Update Interplanetary War Fleets
 	for i in range(war_fleets.size() - 1, -1, -1):
 		var wf = war_fleets[i]
 		wf["t"] += delta * 0.24
@@ -476,24 +667,24 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 					_trigger_extinction(def, "CONQUERED & GLASSED by %s in Interplanetary War!" % wf["attacker"]["name"])
 			wf["node"].queue_free(); war_fleets.remove_at(i)
 		else:
-			# Quadratic Bezier arc between planets
 			var a = wf["from"].lerp(wf["mid"], t)
 			var b = wf["mid"].lerp(wf["to"], t)
 			wf["node"].global_position = a.lerp(b, t)
 
-	# 3. Update Planets, Tech 2000 Wars & Tech 5000 High-Faith Space Megaliths
+	# 3. Update All 8 Worlds, Communications, Wars & Space Megaliths
 	nearest_idx = -1; nearest_dist = 99999.0
 
 	for i in planets.size():
 		var p = planets[i]
 		if p["shattered"]: continue
 
-		# Smooth scale-in animation when newly re-forged from UAP core
 		if p["reform_scale"] < 1.0:
 			p["reform_scale"] = minf(1.0, p["reform_scale"] + delta * 0.65)
 			p["mesh"].scale = Vector3.ONE * p["reform_scale"]
 
 		p["mesh"].rotate_y(delta * 0.04)
+		p["fleet_piv"].visible = (p["stage"] > 0 and not p["shattered"])
+		if p["fleet_piv"].visible: p["fleet_piv"].rotate_y(delta * (0.28 + float(p["stage"]) * 0.12))
 		if p["ring_piv"].visible: p["ring_piv"].rotate_y(delta * 0.16)
 		if p["star_piv"].visible: p["star_piv"].rotate_y(delta * 0.28)
 		if p["mega_piv"].visible:
@@ -502,7 +693,7 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 				p["mega_piv"].scale = p["mega_piv"].scale.lerp(Vector3.ONE, clampf(delta * 0.9, 0.0, 1.0))
 
 		if p["sighting_cd"] > 0.0: p["sighting_cd"] -= delta
-		if p["stage"] == 0: p["ruin_v"] = maxf(0.0, p["ruin_v"] - delta * 0.14) # Cool freshly forged planet
+		if p["stage"] == 0: p["ruin_v"] = maxf(0.0, p["ruin_v"] - delta * 0.14)
 
 		var dist = player_pos.distance_to(p["body"].global_position)
 		if dist < nearest_dist:
@@ -517,10 +708,16 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 			p["ruin_v"] = maxf(0.0, p["ruin_v"] - delta * 0.03)
 
 			# Passive Apparition Sighting when swinging by in Biblical UAP form
-			if is_uap and dist < (float(p["r"]) + 65.0) and p["sighting_cd"] <= 0.0:
+			if is_uap and dist < (float(p["r"]) + 68.0) and p["sighting_cd"] <= 0.0:
 				_trigger_apparition(p)
 
-			# Tech 2000+ Interplanetary Warfare with neighboring inhabited worlds
+			# Civilization Communication Attempt (Earth-History Style Hails)
+			p["comm_cd"] -= delta
+			if p["comm_cd"] <= 0.0 and active_comm.is_empty():
+				p["comm_cd"] = randf_range(26.0, 42.0)
+				_trigger_comm_attempt(i, player_pos)
+
+			# Tech 2000+ Interplanetary Warfare
 			if p["tech"] >= 2000.0:
 				p["war_cd"] -= delta
 				if p["war_cd"] <= 0.0:
@@ -532,7 +729,7 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 					if not rivals.is_empty():
 						_launch_war_fleet(p, rivals[randi() % rivals.size()])
 
-			# Atomic Extinction Crisis during Type 3
+			# Atomic Extinction Crisis (Type 3)
 			if st == 3:
 				p["stability"] = maxf(0.0, p["stability"] - delta * 1.15)
 				p["crisis_cd"] -= delta
@@ -542,7 +739,6 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 				if p["stability"] <= 0.0:
 					_trigger_extinction(p, "ATOMIC SELF-DESTRUCTION! They failed the Great Filter.")
 
-			# Stage Advancement (Type 5 -> Type 1 Star-Forger)
 			var target_st = _stage_for_tech(p["tech"])
 			if target_st > st:
 				p["stage"] = target_st
@@ -558,7 +754,6 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 					_record(p, "ERA ADVANCE: Reached %s!" % STAGE_NAMES[target_st])
 					reward_granted.emit(350, 80, false)
 
-			# Tech 5000+ & High Faith (>= 70%) -> Orbiting Space Megalithic Architecture!
 			if p["tech"] >= 5000.0 and p["faith"] >= 70.0 and not p["megalith_built"]:
 				p["megalith_built"] = true
 				p["mega_piv"].visible = true
@@ -574,38 +769,55 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 		p["mat"].set_shader_parameter("civ_level",  p["civ_v"])
 		p["mat"].set_shader_parameter("ruin_level", p["ruin_v"])
 
-		var war_tag = " [WAR ACTIVE]" if p["tech"] >= 2000.0 else ""
-		var mega_tag = " [SPACE MEGALITHS]" if p["megalith_built"] else ""
-		p["label"].text = "%s\n%s%s%s%s" % [
-			p["name"], STAGE_NAMES[p["stage"]], war_tag, mega_tag,
+		var war_tag = " [WAR]" if p["tech"] >= 2000.0 else ""
+		var mega_tag = " [MEGALITHS]" if p["megalith_built"] else ""
+		p["label"].text = "%s (%s)\n%s%s%s%s" % [
+			p["name"], p["kind"], STAGE_NAMES[p["stage"]], war_tag, mega_tag,
 			("\nTech:%d  Stab:%d%%  Faith:%d%%" % [int(p["tech"]), int(p["stability"]), int(p["faith"])]) if p["stage"] > 0 else "\n[Press Z to Seed | B to Shatter]"
 		]
 
-	# Update HUD Bars
 	if nearest_idx >= 0:
 		var np = planets[nearest_idx]
 		var sd = maxf(0.0, nearest_dist - float(np["r"]))
-		if sd <= 155.0:
-			planet_bar.text = "ORBITING %s (%s) — [Z] %s | [X] Teach | [V] Smite | [B] Shatter | [H] Chronicle" % [
-				np["name"], STAGE_NAMES[np["stage"]],
-				"Seed Life" if np["stage"] == 0 else "Build Monolith"
+		if sd <= 165.0:
+			planet_bar.text = "ORBITING %s (%s) — [C] Discourse | [Z] %s | [X] Teach | [V] Smite | [B] Shatter | [H] Log" % [
+				np["name"], np["kind"], "Seed Life" if np["stage"] == 0 else "Build Monolith"
 			]
 		else:
-			planet_bar.text = "NEAREST WORLD: %s (%dm) — Fly closer in Biblical UAP form | [H] Chronicle" % [np["name"], int(sd)]
+			planet_bar.text = "NEAREST WORLD: %s (%s, %dm) — Fly closer in Biblical UAP form | [H] Chronicle" % [np["name"], np["kind"], int(sd)]
 	else:
 		planet_bar.text = "ALL WORLDS SHATTERED! Hold [G] to vacuum planetary dust, then press [N] to Re-Forge!"
 
 	var ready_str = " [PRESS N TO SPIT OUT & RE-FORGE PLANET!]" if stored_mass >= 50.0 else " (Hold [G] near shattered debris to Katamari-siphon)"
-	mass_bar.text = "UAP CORE MASS: %d%% | DRIFTING DEBRIS: %d%s" % [int(stored_mass), debris_chunks.size() + debris_motes.size(), ready_str]
+	mass_bar.text = "UAP CORE MASS: %d%% / 500%% (%.1f PLANETS) | DEBRIS: %d%s" % [int(stored_mass), stored_mass / 100.0, debris_chunks.size() + debris_motes.size(), ready_str]
 
 	if chron_panel.visible: _refresh_chronicle()
 
 func _refresh_chronicle() -> void:
 	if nearest_idx < 0: return
 	var p = planets[nearest_idx]
-	chron_title.text = "%s — %s" % [p["name"], STAGE_NAMES[p["stage"]]]
+	chron_title.text = "%s (%s) — %s" % [p["name"], p["kind"], STAGE_NAMES[p["stage"]]]
 	chron_stats.text = "Year: %d | Tech: %d | Stab: %d%% | Faith: %d%% | Megaliths: %s" % [
 		int(p["year"]), int(p["tech"]), int(p["stability"]), int(p["faith"]),
 		"BUILT IN ORBIT" if p["megalith_built"] else "Need 5000 Tech + 70% Faith"
 	]
 	chron_log.text = "\n".join(p["history"])
+
+func get_nearest_inhabited() -> Dictionary:
+	if nearest_idx >= 0:
+		var p = planets[nearest_idx]
+		if not p["shattered"] and p["stage"] > 0:
+			return p
+	for p in planets:
+		if not p["shattered"] and p["stage"] > 0:
+			return p
+	return {}
+
+func apply_discourse_impact(p_name: String, d_tech: float, d_faith: float, d_stab: float, note: String) -> void:
+	for p in planets:
+		if p["name"] == p_name and not p["shattered"] and p["stage"] > 0:
+			p["tech"] += d_tech
+			p["faith"] = clampf(p["faith"] + d_faith, 0.0, 100.0)
+			p["stability"] = clampf(p["stability"] + d_stab, 0.0, 100.0)
+			_record(p, "DISCOURSE: " + note)
+			break

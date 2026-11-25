@@ -349,6 +349,13 @@ func _normalize_glb_avatar(root: Node3D) -> void:
 func _attach_external_mocap(root: Node3D) -> void:
 	var lib_path := "res://assets/animations/mocap_library.glb"
 	if not FileAccess.file_exists(lib_path): return
+	var target_skel: Skeleton3D = null
+	var sq: Array[Node] = [root]
+	while not sq.is_empty():
+		var n = sq.pop_back()
+		if n is Skeleton3D: target_skel = n; break
+		for c in n.get_children(): sq.append(c)
+	if target_skel == null: return
 	var gltf = GLTFDocument.new(); var st = GLTFState.new()
 	if gltf.append_from_buffer(FileAccess.get_file_as_bytes(lib_path), "", st) != OK: return
 	var src = gltf.generate_scene(st)
@@ -360,16 +367,36 @@ func _attach_external_mocap(root: Node3D) -> void:
 		if n is AnimationPlayer: src_ap = n; break
 		for c in n.get_children(): q.append(c)
 	if src_ap != null:
-		if custom_anim == null:
-			custom_anim = AnimationPlayer.new(); root.add_child(custom_anim)
+		var skel_rel := str(root.get_path_to(target_skel))
 		var lib = AnimationLibrary.new()
+		var added := 0
 		for aname in src_ap.get_animation_list():
 			var anim = src_ap.get_animation(aname)
-			if anim: lib.add_animation(aname, anim.duplicate())
-			var low = str(aname).to_lower()
-			if "idle" in low: custom_clips["idle"] = "mocap/" + str(aname)
-			elif "run" in low or "sprint" in low: custom_clips["run"] = "mocap/" + str(aname)
-			elif "walk" in low: custom_clips["walk"] = "mocap/" + str(aname)
-			elif "aim" in low or "rifle" in low or "shoot" in low: custom_clips["aim"] = "mocap/" + str(aname)
-		custom_anim.add_animation_library("mocap", lib)
+			if anim == null: continue
+			var dup: Animation = anim.duplicate()
+			if _prune_missing_tracks(dup, target_skel, skel_rel) >= 4:
+				lib.add_animation(aname, dup)
+				added += 1
+				var low = str(aname).to_lower()
+				if "idle" in low: custom_clips["idle"] = "mocap/" + str(aname)
+				elif "run" in low or "sprint" in low: custom_clips["run"] = "mocap/" + str(aname)
+				elif "walk" in low: custom_clips["walk"] = "mocap/" + str(aname)
+				elif "aim" in low or "rifle" in low or "shoot" in low: custom_clips["aim"] = "mocap/" + str(aname)
+		if added > 0:
+			if custom_anim == null:
+				custom_anim = AnimationPlayer.new(); root.add_child(custom_anim)
+			custom_anim.add_animation_library("mocap", lib)
 	src.queue_free()
+
+func _prune_missing_tracks(anim: Animation, skel: Skeleton3D, skel_rel: String) -> int:
+	for ti in range(anim.get_track_count() - 1, -1, -1):
+		var tp := anim.track_get_path(ti)
+		if tp.get_subname_count() > 0:
+			var bname := String(tp.get_subname(0))
+			if skel.find_bone(bname) == -1:
+				anim.remove_track(ti)
+			else:
+				anim.track_set_path(ti, NodePath(skel_rel + ":" + bname))
+		else:
+			anim.remove_track(ti)
+	return anim.get_track_count()

@@ -1,6 +1,8 @@
 extends Node3D
 class_name OTSCamera
 
+var touch_look := Vector2.ZERO
+
 var yaw_pivot: Node3D
 var arm: SpringArm3D
 var cam: Camera3D
@@ -89,3 +91,9 @@ func update_cam(delta: float, target: Node3D, in_vehicle: bool, aiming: bool) ->
 	arm.position.x = lerpf(arm.position.x, target_x, clampf(u_delta * 12.0, 0.0, 1.0))
 	arm.spring_length = lerpf(arm.spring_length, target_len, clampf(u_delta * 10.0, 0.0, 1.0))
 	cam.fov = lerpf(cam.fov, target_fov, clampf(u_delta * 10.0, 0.0, 1.0))
+
+func _process(delta: float) -> void:
+	if touch_look.length() > 0.01:
+		var _ud = delta / maxf(Engine.time_scale, 0.08)
+		yaw -= touch_look.x * 2.5 * _ud
+		pitch = clampf(pitch - touch_look.y * 1.9 * _ud, -1.18, 1.18)
