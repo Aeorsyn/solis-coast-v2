@@ -8,6 +8,8 @@ var core_mesh: MeshInstance3D
 var core_light: OmniLight3D
 var pulse := 0.0
 var t_acc := 0.0
+var siphon_active := false
+var siphon_charge := 0.0
 
 func _ready() -> void:
 	var gold_mat = StandardMaterial3D.new()
@@ -74,10 +76,14 @@ func _make_eye_ring(radius: float, tube: float, eye_cnt: int, ring_mat: Material
 func pulse_fire() -> void:
 	pulse = 1.0
 
+func set_siphon_state(active: bool, charge_ratio: float) -> void:
+	siphon_active = active
+	siphon_charge = clampf(charge_ratio, 0.0, 1.0)
+
 func update_uap(u_delta: float, vel: Vector3, is_aiming: bool) -> void:
 	t_acc += u_delta
 	pulse = maxf(0.0, pulse - u_delta * 4.5)
-	var spd_boost = 1.0 + clampf(vel.length() / 22.0, 0.0, 2.6) + pulse * 1.8
+	var spd_boost = 1.0 + clampf(vel.length() / 22.0, 0.0, 2.6) + pulse * 1.8 + (2.4 if siphon_active else 0.0) + siphon_charge * 1.2
 
 	# Gyroscopic Ezekiel-Wheel counter-rotations
 	ring_outer.rotate_y(u_delta * 1.35 * spd_boost)
@@ -87,6 +93,6 @@ func update_uap(u_delta: float, vel: Vector3, is_aiming: bool) -> void:
 	ring_inner.rotate_x(-u_delta * 2.65 * spd_boost)
 	ring_inner.rotate_y(u_delta * 1.75 * spd_boost)
 
-	var sc = 1.0 + sin(t_acc * 5.0) * 0.07 + pulse * 0.28
+	var sc = 1.0 + sin(t_acc * 5.0) * 0.07 + pulse * 0.28 + siphon_charge * 0.85 + (0.22 if siphon_active else 0.0)
 	core_mesh.scale = Vector3.ONE * sc
-	core_light.light_energy = (7.5 if is_aiming else 5.2) + pulse * 4.5
+	core_light.light_energy = (7.5 if is_aiming else 5.2) + pulse * 4.5 + siphon_charge * 5.0 + (3.5 if siphon_active else 0.0)

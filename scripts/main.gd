@@ -25,6 +25,7 @@ var uap_form: BiblicalUAP = null
 var is_uap_form := false
 var uap_manual_lock := false
 var uap_hud_lbl: Label = null
+var cosmos_mgr: CosmosManager = null
 var char_creator: CharacterCreatorUI = null
 var max_hp := 100.0
 var event_dir: EventDirector = null
@@ -87,6 +88,9 @@ func _ready() -> void:
 	rpg_sys = RPGSystem.new(); add_child(rpg_sys)
 	nature_mgr = NatureManager.new(); add_child(nature_mgr); nature_mgr.setup(is_desktop)
 	uap_form = BiblicalUAP.new(); uap_form.visible = false; player.add_child(uap_form)
+	cosmos_mgr = CosmosManager.new(); add_child(cosmos_mgr); cosmos_mgr.setup()
+	cosmos_mgr.chronicle_event.connect(func(m): if audio_mgr: audio_mgr.play_chime(); _toast(m))
+	cosmos_mgr.reward_granted.connect(func(c, x, loot): banked_cash += c; if rpg_sys: rpg_sys.add_xp(x); if loot: rpg_sys.roll_loot_drop(true))
 	rpg_sys.toast.connect(_toast)
 	rpg_sys.stats_changed.connect(func(): max_hp = (150.0 if (hellfire_mgr and hellfire_mgr.unlocked_armor) else 100.0) + rpg_sys.bonus_hp; player_hp = minf(player_hp, max_hp))
 	rpg_sys.closed.connect(func(): if input_mode == "PC": Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED))
@@ -367,6 +371,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F3: _cycle_weather()
 			KEY_F4: _toggle_hellfire()
 			KEY_F5: _toggle_abyss()
+			KEY_Z:
+				if cosmos_mgr: cosmos_mgr.interact_nearest("seed", _ppos())
+			KEY_X:
+				if cosmos_mgr: cosmos_mgr.interact_nearest("teach", _ppos())
+			KEY_V:
+				if cosmos_mgr: cosmos_mgr.interact_nearest("smite", _ppos())
+			KEY_H:
+				if cosmos_mgr: cosmos_mgr.toggle_chronicle()
+			KEY_B:
+				if cosmos_mgr: cosmos_mgr.shatter_nearest(_ppos())
+			KEY_N:
+				if cosmos_mgr: cosmos_mgr.reforge_planet(_ppos(), -cam.global_transform.basis.z)
 			KEY_U:
 				if abyss_mgr and abyss_mgr.active:
 					uap_manual_lock = not uap_manual_lock
@@ -461,6 +477,10 @@ func _physics_process(delta: float) -> void:
 	if crowd_mgr: crowd_mgr.update_crowd(delta, ppos, streamer)
 	if wildlife_mgr: wildlife_mgr.update_wildlife(delta, ppos)
 	if hellfire_mgr: hellfire_mgr.update_hellfire(delta, ppos)
+	if cosmos_mgr:
+		var siphon_on = is_uap_form and Input.is_physical_key_pressed(KEY_G)
+		cosmos_mgr.update_cosmos(delta, ppos, is_uap_form, siphon_on)
+		if uap_form: uap_form.set_siphon_state(siphon_on, cosmos_mgr.stored_mass / 100.0)
 	if abyss_mgr:
 		abyss_mgr.update_abyss(delta, ppos)
 		if uap_hud_lbl:
@@ -678,6 +698,7 @@ func _toggle_abyss() -> void:
 		uap_manual_lock = false
 		if is_uap_form: _set_uap_form(false)
 	abyss_mgr.set_active(nxt, world_env, sky_mat, sun, _ppos())
+	if cosmos_mgr: cosmos_mgr.set_active(nxt, _ppos())
 	if touch_hud: touch_hud.abyss_enabled = nxt; touch_hud.queue_redraw()
 	_sync_rift_atmosphere()
 	if nxt and hellfire_mgr and hellfire_mgr.active:
