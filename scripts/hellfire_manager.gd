@@ -34,7 +34,7 @@ func setup(desktop_mode: bool) -> void:
 
 	# 1. High-Density Incandescent Flying Sparks
 	p_sparks = GPUParticles3D.new()
-	p_sparks.amount = 650 if is_desktop else 220; p_sparks.lifetime = 1.6; p_sparks.emitting = false
+	p_sparks.amount = 340 if is_desktop else 130; p_sparks.lifetime = 1.6; p_sparks.emitting = false
 	p_sparks.visibility_aabb = AABB(Vector3(-45, -15, -45), Vector3(90, 50, 90))
 	var sp_pm = ParticleProcessMaterial.new()
 	sp_pm.particle_flag_align_y = true; sp_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
@@ -50,7 +50,7 @@ func setup(desktop_mode: bool) -> void:
 
 	# 2. Tumbling Charred Ash & Burnt Debris
 	p_charred = GPUParticles3D.new()
-	p_charred.amount = 240 if is_desktop else 90; p_charred.lifetime = 2.4; p_charred.emitting = false
+	p_charred.amount = 110 if is_desktop else 50; p_charred.lifetime = 2.4; p_charred.emitting = false
 	p_charred.visibility_aabb = AABB(Vector3(-45, -15, -45), Vector3(90, 50, 90))
 	var ch_pm = ParticleProcessMaterial.new()
 	ch_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX; ch_pm.emission_box_extents = Vector3(14.0, 4.5, 14.0)
@@ -65,15 +65,15 @@ func setup(desktop_mode: bool) -> void:
 
 	# 3. Billowing Hellfire Plumes
 	p_flames = GPUParticles3D.new()
-	p_flames.amount = 190 if is_desktop else 80; p_flames.lifetime = 1.15; p_flames.emitting = false
+	p_flames.amount = 110 if is_desktop else 45; p_flames.lifetime = 1.15; p_flames.emitting = false
 	p_flames.visibility_aabb = AABB(Vector3(-45, -15, -45), Vector3(90, 50, 90))
 	var fl_pm = ParticleProcessMaterial.new()
 	fl_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
 	fl_pm.emission_ring_radius = 16.0; fl_pm.emission_ring_inner_radius = 5.0; fl_pm.emission_ring_height = 1.0
 	fl_pm.direction = Vector3(0, 1, 0); fl_pm.spread = 22.0; fl_pm.gravity = Vector3(0, 6.5, 0)
-	fl_pm.initial_velocity_min = 3.0; fl_pm.initial_velocity_max = 7.5; fl_pm.scale_min = 0.85; fl_pm.scale_max = 2.1
+	fl_pm.initial_velocity_min = 3.0; fl_pm.initial_velocity_max = 7.5; fl_pm.scale_min = 0.50; fl_pm.scale_max = 1.15
 	p_flames.process_material = fl_pm
-	var fl_mesh = QuadMesh.new(); fl_mesh.size = Vector2(1.45, 2.35)
+	var fl_mesh = QuadMesh.new(); fl_mesh.size = Vector2(0.72, 1.25)
 	var fl_mat = ShaderMaterial.new(); fl_mat.shader = load("res://shaders/flicker_fire.gdshader")
 	fl_mesh.material = fl_mat; p_flames.draw_pass_1 = fl_mesh; fx_root.add_child(p_flames)
 
@@ -89,8 +89,7 @@ func set_active(state: bool, env: Environment, sky: ProceduralSkyMaterial, sun: 
 
 	if active:
 		saved_fog = env.volumetric_fog_density
-		env.volumetric_fog_enabled = true; env.volumetric_fog_density = 0.018
-		env.volumetric_fog_albedo = Color(0.55, 0.18, 0.06)
+		env.volumetric_fog_enabled = false; env.fog_enabled = true; env.fog_density = 0.012; env.fog_light_color = Color(0.55, 0.18, 0.06)
 		env.glow_intensity = 1.15; env.glow_bloom = 0.38; env.ambient_light_energy = 0.85
 		sky.sky_top_color = Color(0.14, 0.04, 0.02); sky.sky_horizon_color = Color(0.75, 0.24, 0.06)
 		sky.ground_horizon_color = Color(0.32, 0.10, 0.03)
@@ -109,7 +108,7 @@ func set_active(state: bool, env: Environment, sky: ProceduralSkyMaterial, sun: 
 		projectiles.clear()
 
 func _add_part(parent: Node3D, mesh: Mesh, pos: Vector3, rot_deg := Vector3.ZERO, scl := Vector3.ONE) -> MeshInstance3D:
-	var mi = MeshInstance3D.new(); mi.mesh = mesh; mi.position = pos; mi.rotation_degrees = rot_deg; mi.scale = scl
+	var mi = MeshInstance3D.new(); mi.mesh = mesh; mi.position = pos; mi.rotation_degrees = rot_deg; mi.scale = scl; mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	parent.add_child(mi); return mi
 
 func _spawn_demon(around: Vector3, flying: bool) -> void:

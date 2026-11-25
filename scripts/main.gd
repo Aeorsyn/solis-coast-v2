@@ -95,7 +95,7 @@ func _ready() -> void:
 	abyss_mgr.pickup_collected.connect(func(k, m): if k == "astral": player_hp = minf(max_hp, player_hp + 35.0); banked_cash += 400; if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	_build_hud()
 	var init_m = "TOUCH" if (not is_desktop) else ("PS5" if not Input.get_connected_joypads().is_empty() else "PC")
-	_set_input_mode(init_m)
+	_set_input_mode("TOUCH" if OS.has_feature("web") else init_m)
 	call_deferred("_toggle_abyss")
 
 func _build_player(pos: Vector3) -> void:

@@ -5,6 +5,7 @@ var input_mode := "PC" # "PC", "PS5", "TOUCH"
 var touch_enabled := false
 var ghost_enabled := false
 var hell_enabled := false
+var abyss_enabled := false
 
 var joy_vec := Vector2.ZERO
 var joy_touch_idx := -1
@@ -55,6 +56,10 @@ func _hell_rect() -> Rect2:
 	var s = get_viewport_rect().size
 	return Rect2(s.x - 480.0, 16.0, 148.0, 38.0)
 
+func _abyss_rect() -> Rect2:
+	var s = get_viewport_rect().size
+	return Rect2(s.x - 638.0, 16.0, 148.0, 38.0)
+
 func _joy_center() -> Vector2:
 	var s = get_viewport_rect().size
 	return Vector2(130.0, s.y - 135.0)
@@ -72,6 +77,9 @@ func _hit_top_pill(p: Vector2) -> bool:
 		return true
 	if _hell_rect().has_point(p):
 		if on_action.is_valid(): on_action.call("hell")
+		return true
+	if _abyss_rect().has_point(p):
+		if on_action.is_valid(): on_action.call("abyss")
 		return true
 	return false
 
@@ -131,6 +139,7 @@ func _draw() -> void:
 	_draw_pill(_mode_rect(), mode_col, Color(0.35, 0.90, 1.0, 0.85), "MODE: " + input_mode)
 	_draw_pill(_ghost_rect(), Color(0.75, 0.25, 0.92, 0.88) if ghost_enabled else Color(0.18, 0.20, 0.28, 0.78), Color(0.85, 0.55, 1.0, 0.85), "GHOST: ON" if ghost_enabled else "GHOST: OFF")
 	_draw_pill(_hell_rect(), Color(0.92, 0.24, 0.06, 0.90) if hell_enabled else Color(0.18, 0.20, 0.28, 0.78), Color(1.0, 0.55, 0.15, 0.88), "HELL: ON" if hell_enabled else "HELL: OFF")
+	_draw_pill(_abyss_rect(), Color(0.42, 0.14, 0.88, 0.92) if abyss_enabled else Color(0.18, 0.20, 0.28, 0.78), Color(0.42, 0.90, 1.0, 0.88), "ABYSS: ON" if abyss_enabled else "ABYSS: OFF")
 
 	if not touch_enabled: return
 	var font = ThemeDB.fallback_font
