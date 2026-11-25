@@ -14,6 +14,7 @@ var custom_glb_node: Node3D = null
 var custom_anim: AnimationPlayer = null
 var custom_clips := {}
 var anim_phase := 0.0; var idle_time := 0.0
+var recoil_kick := 0.0; var bank_angle := 0.0; var pitch_angle := 0.0
 var is_detailed_hero := false
 
 static func _make_raglan_tex(base_col: Color, detailed := false) -> ImageTexture:
@@ -180,7 +181,10 @@ func set_shirt_color(col: Color) -> void:
 	if torso_mat: torso_mat.albedo_texture = _make_raglan_tex(col, is_detailed_hero)
 	if sleeve_mat: sleeve_mat.albedo_color = col.darkened(0.68)
 
-func animate(move_speed: float, is_sprinting: bool, is_aiming: bool, delta: float) -> void:
+func trigger_recoil() -> void:
+	recoil_kick = minf(recoil_kick + 0.22, 0.35)
+
+func animate(move_speed: float, is_sprinting: bool, is_aiming: bool, delta: float, local_vel := Vector3.ZERO, is_flying := false) -> void:
 	if custom_glb_node != null:
 		idle_time += delta
 		if custom_anim != null and not custom_clips.is_empty():
@@ -195,45 +199,92 @@ func animate(move_speed: float, is_sprinting: bool, is_aiming: bool, delta: floa
 			custom_glb_node.position.y = custom_glb_node.get_meta("base_y", -0.84) + bob
 		return
 
-	idle_time += delta
-	var spd_l = clampf(delta * 12.0, 0.0, 1.0)
+	var u_d = delta / maxf(Engine.time_scale, 0.12)
+	idle_time += u_d
+	recoil_kick = lerpf(recoil_kick, 0.0, clampf(u_d * 18.0, 0.0, 1.0))
+	var spd_l = clampf(u_d * 12.0, 0.0, 1.0)
 
+	if is_flying:
+		# Wire-fu / Zero-G Space Flight Kinematics (pitch into velocity, bank into strafes)
+		var fwd_ratio = clampf(local_vel.z / 16.0, -0.5, 1.0)
+		var lat_ratio = clampf(local_vel.x / 14.0, -1.0, 1.0)
+		var target_pitch = (0.28 if is_aiming else 0.95) * maxf(0.0, fwd_ratio) - (0.22 * maxf(0.0, -fwd_ratio))
+		var target_bank = -lat_ratio * (0.25 if is_aiming else 0.55)
+		pitch_angle = lerpf(pitch_angle, target_pitch, clampf(u_d * 8.0, 0.0, 1.0))
+		bank_angle  = lerpf(bank_angle,  target_bank,  clampf(u_d * 9.0, 0.0, 1.0))
+
+		hips.position.y = sin(idle_time * 2.6) * 0.09
+		hips.rotation = hips.rotation.lerp(Vector3(pitch_angle, 0.0, bank_angle), spd_l)
+		# Trailing aerodynamic legs with subtle zero-G flutter
+		var fl = sin(idle_time * 3.8) * 0.08
+		leg_l.rotation = leg_l.rotation.lerp(Vector3(0.22 + fl, 0.0, -0.06), spd_l)
+		leg_r.rotation = leg_r.rotation.lerp(Vector3(0.38 - fl, 0.0,  0.06), spd_l)
+		shin_l.rotation.x = lerpf(shin_l.rotation.x, 0.25 + (0.35 if move_speed < 2.0 else 0.0), spd_l)
+		shin_r.rotation.x = lerpf(shin_r.rotation.x, 0.48 + (0.25 if move_speed < 2.0 else 0.0), spd_l)
+
+		if is_aiming:
+			torso.rotation = torso.rotation.lerp(Vector3(-pitch_angle * 0.55 - recoil_kick * 0.35, 0.24, -bank_angle * 0.4), spd_l)
+			head.rotation  = head.rotation.lerp(Vector3(-pitch_angle * 0.35, -0.22, 0.06), spd_l)
+			arm_r.rotation = arm_r.rotation.lerp(Vector3(-1.32 - recoil_kick, -0.20, 0.14), spd_l)
+			fore_r.rotation = fore_r.rotation.lerp(Vector3(-0.34, 0.0, 0.0), spd_l)
+			arm_l.rotation = arm_l.rotation.lerp(Vector3(-1.12 - recoil_kick * 0.6, 0.66, -0.28), spd_l)
+			fore_l.rotation = fore_l.rotation.lerp(Vector3(-0.82, 0.0, 0.0), spd_l)
+			gun_root.rotation = gun_root.rotation.lerp(Vector3(1.54, 0.16, 0.0), spd_l)
+		else:
+			torso.rotation = torso.rotation.lerp(Vector3(0.08, 0.0, 0.0), spd_l)
+			head.rotation  = head.rotation.lerp(Vector3(-pitch_angle * 0.72, 0.0, 0.0), spd_l)
+			# Swept-back wire-fu flight arms
+			arm_l.rotation = arm_l.rotation.lerp(Vector3(0.45, 0.0, -0.28 - abs(lat_ratio) * 0.2), spd_l)
+			fore_l.rotation = fore_l.rotation.lerp(Vector3(-0.35, 0.0, 0.0), spd_l)
+			arm_r.rotation = arm_r.rotation.lerp(Vector3(0.35, 0.0,  0.24 + abs(lat_ratio) * 0.2), spd_l)
+			fore_r.rotation = fore_r.rotation.lerp(Vector3(-0.45, 0.0, 0.0), spd_l)
+			gun_root.rotation = gun_root.rotation.lerp(Vector3(0.25, 0.0, 0.0), spd_l)
+		return
+
+	# Ground Kinetic Locomotion (Asymmetric knee-drive, pelvic counter-twist & strafe lean)
+	var lat_lean = clampf(-local_vel.x / 18.0, -0.22, 0.22)
 	if move_speed > 0.3:
-		var freq = 11.2 if is_sprinting else 7.6
-		var amp = 0.78 if is_sprinting else 0.48
+		var freq = 11.4 if is_sprinting else (7.8 if not is_aiming else 6.8)
+		var amp = 0.86 if is_sprinting else (0.56 if not is_aiming else 0.42)
 		anim_phase += delta * freq
-		var sw = sin(anim_phase) * amp
-		leg_l.rotation.x = sw; leg_r.rotation.x = -sw
-		shin_l.rotation.x = maxf(0.0, -sw * 0.95)
-		shin_r.rotation.x = maxf(0.0,  sw * 0.95)
-		hips.position.y = abs(cos(anim_phase)) * (0.07 if is_sprinting else 0.04)
+		var sw = sin(anim_phase)
+		var cs = cos(anim_phase)
+
+		# Natural human gait: hips twist opposite shoulders, knees flex cleanly on swing-through
+		hips.position.y = abs(cs) * (0.075 if is_sprinting else 0.042) - 0.015
+		hips.rotation = hips.rotation.lerp(Vector3(0.0, sw * 0.14, lat_lean + sw * 0.045), spd_l)
+
+		leg_l.rotation = leg_l.rotation.lerp(Vector3( sw * amp, 0.0, 0.0), spd_l)
+		leg_r.rotation = leg_r.rotation.lerp(Vector3(-sw * amp, 0.0, 0.0), spd_l)
+		shin_l.rotation.x = lerpf(shin_l.rotation.x, maxf(0.05, -sw * 0.65 + maxf(0.0, -cs) * 0.55) * (1.2 if is_sprinting else 0.88), spd_l)
+		shin_r.rotation.x = lerpf(shin_r.rotation.x, maxf(0.05,  sw * 0.65 + maxf(0.0,  cs) * 0.55) * (1.2 if is_sprinting else 0.88), spd_l)
 	else:
-		leg_l.rotation.x = lerpf(leg_l.rotation.x, 0.0, spd_l)
-		leg_r.rotation.x = lerpf(leg_r.rotation.x, 0.0, spd_l)
-		shin_l.rotation.x = lerpf(shin_l.rotation.x, 0.0, spd_l)
-		shin_r.rotation.x = lerpf(shin_r.rotation.x, 0.0, spd_l)
-		hips.position.y = sin(idle_time * 2.2) * 0.015
+		# Alive breathing & subtle weight shift at idle
+		var br = sin(idle_time * 2.1)
+		hips.position.y = br * 0.016
+		hips.rotation = hips.rotation.lerp(Vector3(0.0, sin(idle_time * 0.9) * 0.04, 0.0), spd_l)
+		leg_l.rotation = leg_l.rotation.lerp(Vector3(0.03, 0.0, -0.02), spd_l)
+		leg_r.rotation = leg_r.rotation.lerp(Vector3(-0.03, 0.0,  0.02), spd_l)
+		shin_l.rotation.x = lerpf(shin_l.rotation.x, 0.06, spd_l)
+		shin_r.rotation.x = lerpf(shin_r.rotation.x, 0.06, spd_l)
 
 	if is_aiming:
-		torso.rotation.x = lerpf(torso.rotation.x, 0.12, spd_l)
-		torso.rotation.y = lerpf(torso.rotation.y, 0.26, spd_l)
-		head.rotation.y  = lerpf(head.rotation.y, -0.24, spd_l)
-		head.rotation.z  = lerpf(head.rotation.z, 0.08, spd_l)
-		arm_r.rotation   = arm_r.rotation.lerp(Vector3(-1.32, -0.22, 0.14), spd_l)
-		fore_r.rotation  = fore_r.rotation.lerp(Vector3(-0.36, 0.0, 0.0), spd_l)
-		arm_l.rotation   = arm_l.rotation.lerp(Vector3(-1.12, 0.68, -0.28), spd_l)
-		fore_l.rotation  = fore_l.rotation.lerp(Vector3(-0.82, 0.0, 0.0), spd_l)
+		torso.rotation = torso.rotation.lerp(Vector3(0.11 - recoil_kick * 0.4, 0.26, lat_lean * 0.6), spd_l)
+		head.rotation  = head.rotation.lerp(Vector3(-0.04, -0.24, 0.07), spd_l)
+		arm_r.rotation = arm_r.rotation.lerp(Vector3(-1.32 - recoil_kick, -0.22, 0.14), spd_l)
+		fore_r.rotation = fore_r.rotation.lerp(Vector3(-0.36, 0.0, 0.0), spd_l)
+		arm_l.rotation = arm_l.rotation.lerp(Vector3(-1.12 - recoil_kick * 0.65, 0.68, -0.28), spd_l)
+		fore_l.rotation = fore_l.rotation.lerp(Vector3(-0.82, 0.0, 0.0), spd_l)
 		gun_root.rotation = gun_root.rotation.lerp(Vector3(1.54, 0.16, 0.0), spd_l)
 	else:
-		var sw = sin(anim_phase) * (0.65 if is_sprinting else 0.42) if move_speed > 0.3 else 0.0
-		torso.rotation.x = lerpf(torso.rotation.x, 0.14 if is_sprinting else 0.03, spd_l)
-		torso.rotation.y = lerpf(torso.rotation.y, sw * 0.12, spd_l)
-		head.rotation.y  = lerpf(head.rotation.y, 0.0, spd_l)
-		head.rotation.z  = lerpf(head.rotation.z, 0.0, spd_l)
-		arm_l.rotation   = arm_l.rotation.lerp(Vector3(-sw, 0.0, -0.06), spd_l)
-		fore_l.rotation  = fore_l.rotation.lerp(Vector3(-0.22 - maxf(0.0, sw * 0.5), 0.0, 0.0), spd_l)
-		arm_r.rotation   = arm_r.rotation.lerp(Vector3( sw, 0.0,  0.06), spd_l)
-		fore_r.rotation  = fore_r.rotation.lerp(Vector3(-0.22 - maxf(0.0, -sw * 0.5), 0.0, 0.0), spd_l)
+		var sw_a = sin(anim_phase) * (0.78 if is_sprinting else 0.45) if move_speed > 0.3 else 0.0
+		var lean_f = 0.22 if is_sprinting else (0.07 if move_speed > 0.3 else 0.02)
+		torso.rotation = torso.rotation.lerp(Vector3(lean_f, -sw_a * 0.24, lat_lean * 0.8), spd_l)
+		head.rotation  = head.rotation.lerp(Vector3(-lean_f * 0.4, sw_a * 0.12, 0.0), spd_l)
+		arm_l.rotation = arm_l.rotation.lerp(Vector3(-sw_a, 0.0, -0.07), spd_l)
+		fore_l.rotation = fore_l.rotation.lerp(Vector3(-0.28 - maxf(0.0, sw_a * 0.65), 0.0, 0.0), spd_l)
+		arm_r.rotation = arm_r.rotation.lerp(Vector3( sw_a * 0.7, 0.0,  0.07), spd_l)
+		fore_r.rotation = fore_r.rotation.lerp(Vector3(-0.32 - maxf(0.0, -sw_a * 0.45), 0.0, 0.0), spd_l)
 		gun_root.rotation = gun_root.rotation.lerp(Vector3(0.0, 0.0, 0.0), spd_l)
 
 func apply_profile(prof: Dictionary) -> void:
@@ -280,6 +331,7 @@ func _normalize_glb_avatar(root: Node3D) -> void:
 
 	# Rigged Mixamo/glTF characters (Xbot, Michelle) are already authored upright in meters
 	if has_skel:
+		_attach_external_mocap(root)
 		root.rotation = Vector3.ZERO
 		root.scale = Vector3.ONE
 		root.position = Vector3(0.0, -0.86, 0.0)
@@ -293,3 +345,31 @@ func _normalize_glb_avatar(root: Node3D) -> void:
 		var base_y = -0.86 - (bounds.position.y * sc)
 		root.position = Vector3(0.0, base_y, 0.0)
 		root.set_meta("base_y", base_y)
+
+func _attach_external_mocap(root: Node3D) -> void:
+	var lib_path := "res://assets/animations/mocap_library.glb"
+	if not FileAccess.file_exists(lib_path): return
+	var gltf = GLTFDocument.new(); var st = GLTFState.new()
+	if gltf.append_from_buffer(FileAccess.get_file_as_bytes(lib_path), "", st) != OK: return
+	var src = gltf.generate_scene(st)
+	if src == null: return
+	var src_ap: AnimationPlayer = null
+	var q: Array[Node] = [src]
+	while not q.is_empty():
+		var n = q.pop_back()
+		if n is AnimationPlayer: src_ap = n; break
+		for c in n.get_children(): q.append(c)
+	if src_ap != null:
+		if custom_anim == null:
+			custom_anim = AnimationPlayer.new(); root.add_child(custom_anim)
+		var lib = AnimationLibrary.new()
+		for aname in src_ap.get_animation_list():
+			var anim = src_ap.get_animation(aname)
+			if anim: lib.add_animation(aname, anim.duplicate())
+			var low = str(aname).to_lower()
+			if "idle" in low: custom_clips["idle"] = "mocap/" + str(aname)
+			elif "run" in low or "sprint" in low: custom_clips["run"] = "mocap/" + str(aname)
+			elif "walk" in low: custom_clips["walk"] = "mocap/" + str(aname)
+			elif "aim" in low or "rifle" in low or "shoot" in low: custom_clips["aim"] = "mocap/" + str(aname)
+		custom_anim.add_animation_library("mocap", lib)
+	src.queue_free()

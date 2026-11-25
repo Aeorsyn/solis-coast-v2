@@ -18,6 +18,8 @@ var crowd_mgr: CrowdManager = null
 var wildlife_mgr: WildlifeManager = null
 var audio_mgr: AudioManager = null
 var hellfire_mgr: HellfireManager = null
+var abyss_mgr: AbyssManager = null
+var rpg_sys: RPGSystem = null
 var char_creator: CharacterCreatorUI = null
 var max_hp := 100.0
 var event_dir: EventDirector = null
@@ -72,10 +74,18 @@ func _ready() -> void:
 	event_dir.event_reward.connect(func(c, m): banked_cash += c; if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	audio_mgr = AudioManager.new(); add_child(audio_mgr)
 	hellfire_mgr = HellfireManager.new(); add_child(hellfire_mgr); hellfire_mgr.setup(is_desktop)
-	hellfire_mgr.demon_killed.connect(func(c, m): banked_cash += c; if audio_mgr: audio_mgr.play_chime(); _toast(m))
-	hellfire_mgr.player_hit.connect(func(d): player_hp = maxf(10.0, player_hp - d); _toast("DEMON HIT! HP: %d%%" % int(player_hp)))
+	hellfire_mgr.demon_killed.connect(func(c, m): banked_cash += c; if audio_mgr: audio_mgr.play_chime(); _toast(m); if rpg_sys: rpg_sys.add_xp(45); if randf() < 0.45: rpg_sys.roll_loot_drop(abyss_mgr and abyss_mgr.active))
+	hellfire_mgr.player_hit.connect(func(d): var nd = rpg_sys.absorb_damage(d) if rpg_sys else d; player_hp = maxf(10.0, player_hp - nd); _toast("DEMON HIT! HP: %d | SHLD: %d" % [int(player_hp), int(rpg_sys.shield_hp) if rpg_sys else 0]))
 	hellfire_mgr.pickup_collected.connect(func(k, m): if k == "soul": player_hp = minf(max_hp, player_hp + 35.0); banked_cash += 350; if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	hellfire_mgr.milestone_unlocked.connect(func(tier, m): if tier == 2: max_hp = 150.0; player_hp = 150.0; player_rig.set_infernal_aura(true); if audio_mgr: audio_mgr.play_chime(); _toast(m))
+	abyss_mgr = AbyssManager.new(); add_child(abyss_mgr); abyss_mgr.setup(is_desktop)
+	rpg_sys = RPGSystem.new(); add_child(rpg_sys)
+	rpg_sys.toast.connect(_toast)
+	rpg_sys.stats_changed.connect(func(): max_hp = (150.0 if (hellfire_mgr and hellfire_mgr.unlocked_armor) else 100.0) + rpg_sys.bonus_hp; player_hp = minf(player_hp, max_hp))
+	rpg_sys.closed.connect(func(): if input_mode == "PC": Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED))
+	abyss_mgr.void_killed.connect(func(c, m): banked_cash += c; if audio_mgr: audio_mgr.play_chime(); _toast(m); if rpg_sys: rpg_sys.add_xp(60); if randf() < 0.55: rpg_sys.roll_loot_drop(true))
+	abyss_mgr.player_hit.connect(func(d): var nd = rpg_sys.absorb_damage(d) if rpg_sys else d; player_hp = maxf(10.0, player_hp - nd); _toast("VOID HIT! HP: %d | SHLD: %d" % [int(player_hp), int(rpg_sys.shield_hp) if rpg_sys else 0]))
+	abyss_mgr.pickup_collected.connect(func(k, m): if k == "astral": player_hp = minf(max_hp, player_hp + 35.0); banked_cash += 400; if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	_build_hud()
 	var init_m = "TOUCH" if (not is_desktop) else ("PS5" if not Input.get_connected_joypads().is_empty() else "PC")
 	_set_input_mode(init_m)
@@ -143,9 +153,11 @@ func _fire_weapon() -> void:
 	if reload_t > 0.0 or fire_cd > 0.0: return
 	if ammo <= 0:
 		reload_t = 1.1; _toast("Reloading sidearm..."); return
-	var is_over = (hellfire_mgr != null and hellfire_mgr.overdrive_timer > 0.0)
+	var is_over = (hellfire_mgr != null and hellfire_mgr.overdrive_timer > 0.0) or (abyss_mgr != null and abyss_mgr.overdrive_timer > 0.0)
+	if active_veh == null: player_rig.trigger_recoil()
 	if not is_over: ammo -= 1
-	fire_cd = 0.08 if is_over else (0.12 if focus_active else 0.17)
+	var is_sandy = (rpg_sys != null and rpg_sys.sandy_timer > 0.0)
+	fire_cd = 0.065 if (is_over or is_sandy) else (0.12 if focus_active else 0.17)
 
 	var orig: Vector3
 	var dir: Vector3
@@ -175,7 +187,15 @@ func _fire_weapon() -> void:
 		if hit["collider"] is SolisVehicle:
 			(hit["collider"] as SolisVehicle).take_damage(24.0)
 			_toast("Hit vehicle!")
-		elif hellfire_mgr and hellfire_mgr.try_hit_demon(hit["collider"], (75.0 if hellfire_mgr.unlocked_brimstone else (56.0 if hellfire_mgr.unlocked_incendiary else 32.0)), end_p):
+		elif hellfire_mgr and var base_d = 75.0 if hellfire_mgr.unlocked_brimstone else (56.0 if hellfire_mgr.unlocked_incendiary else 32.0)
+			var res = rpg_sys.calc_shot_damage(base_d) if rpg_sys else {"dmg": base_d, "crit": false}
+			hellfire_mgr.try_hit_demon(hit["collider"], res["dmg"], end_p)
+			if res["crit"]: _toast("CRIT! %d DMG" % int(res["dmg"])):
+			pass
+		elif abyss_mgr and var ab_base = 45.0 if (abyss_mgr.overdrive_timer > 0.0 or focus_active) else 32.0
+			var ab_res = rpg_sys.calc_shot_damage(ab_base) if rpg_sys else {"dmg": ab_base, "crit": false}
+			abyss_mgr.try_hit_demon(hit["collider"], ab_res["dmg"], end_p)
+			if ab_res["crit"]: _toast("VOID CRIT! %d DMG" % int(ab_res["dmg"])):
 			pass
 		# Impact spark flash
 		var sp = MeshInstance3D.new(); var sm = SphereMesh.new(); sm.radius = 0.14
@@ -184,7 +204,8 @@ func _fire_weapon() -> void:
 		tracers.append({"m": sp, "t": 0.08})
 
 	var mi = MeshInstance3D.new(); var bm = BoxMesh.new(); bm.size = Vector3(0.06, 0.06, maxf(0.2, orig.distance_to(end_p)))
-	var mat = StandardMaterial3D.new(); var col = Color(1.0, 0.25, 0.04) if (hellfire_mgr and hellfire_mgr.unlocked_incendiary) else (Color(0.25, 0.95, 1.0) if focus_active else Color(1.0, 0.85, 0.3))
+	var mat = StandardMaterial3D.new(); var both_rifts = (hellfire_mgr and hellfire_mgr.active) and (abyss_mgr and abyss_mgr.active)
+	var col = Color(1.0, 0.22, 0.65) if both_rifts else (Color(0.58, 0.22, 1.0) if (abyss_mgr and abyss_mgr.active) else (Color(1.0, 0.25, 0.04) if (hellfire_mgr and hellfire_mgr.unlocked_incendiary) else (Color(0.25, 0.95, 1.0) if focus_active else Color(1.0, 0.85, 0.3))))
 	mat.albedo_color = col; mat.emission_enabled = true; mat.emission = col; mat.emission_energy_multiplier = 5.0
 	bm.material = mat; mi.mesh = bm; add_child(mi); mi.global_position = (orig + end_p) * 0.5; mi.look_at(end_p, Vector3.UP)
 	tracers.append({"m": mi, "t": 0.10})
@@ -247,6 +268,7 @@ func _on_touch_action(aid: String) -> void:
 		"scan": _trigger_lidar_pulse()
 		"ghost": _toggle_ghost()
 		"hell": _toggle_hellfire()
+		"abyss": _toggle_abyss()
 		"cycle_mode": _cycle_input_mode()
 		"act":
 			var n = _find_nearest_npc(5.5)
@@ -332,6 +354,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if is_desktop: sdfgi_on = not sdfgi_on; world_env.sdfgi_enabled = sdfgi_on; _toast("SDFGI: " + ("ON" if sdfgi_on else "OFF"))
 			KEY_F3: _cycle_weather()
 			KEY_F4: _toggle_hellfire()
+			KEY_F5: _toggle_abyss()
 			KEY_X: _trigger_lidar_pulse()
 			KEY_V: _toggle_ghost()
 			KEY_B:
@@ -350,6 +373,27 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_E: _toggle_vehicle()
 			KEY_TAB: _swap_character()
 			KEY_K: _toggle_creator()
+			KEY_I: _toggle_rpg()
+			KEY_1:
+				if rpg_sys: rpg_sys.activate_sandevistan()
+			KEY_2:
+				if rpg_sys and active_veh == null:
+					var d_dir = -cam.global_transform.basis.z
+					if not (abyss_mgr and abyss_mgr.active): d_dir.y = 0
+					if rpg_sys.activate_dash(player, d_dir):
+						var dd = rpg_sys.calc_shot_damage(60.0)["dmg"]
+						if hellfire_mgr:
+							for dm in hellfire_mgr.demons.duplicate():
+								if is_instance_valid(dm["body"]) and dm["body"].global_position.distance_to(player.global_position) < 9.5:
+									hellfire_mgr.try_hit_demon(dm["body"], dd, dm["body"].global_position)
+						if abyss_mgr:
+							for dm in abyss_mgr.demons.duplicate():
+								if is_instance_valid(dm["body"]) and dm["body"].global_position.distance_to(player.global_position) < 11.0:
+									abyss_mgr.try_hit_demon(dm["body"], dd, dm["body"].global_position)
+			KEY_3:
+				if rpg_sys: rpg_sys.activate_short_circuit(_ppos(), hellfire_mgr, abyss_mgr, self)
+			KEY_4:
+				if rpg_sys: rpg_sys.activate_aegis()
 			KEY_M: _cycle_region()
 
 func _find_nearest_car(max_d: float) -> SolisVehicle:
@@ -370,7 +414,7 @@ func _toggle_vehicle() -> void:
 	v.wake_for_player(); active_veh = v; player.visible = false; player_col.disabled = true
 
 func _update_lighting(delta: float) -> void:
-	if hellfire_mgr and hellfire_mgr.active: return
+	if (hellfire_mgr and hellfire_mgr.active) or (abyss_mgr and abyss_mgr.active): return
 	var rate = 3.5 if (not chat_panel.visible and Input.is_key_pressed(KEY_N)) else 0.015
 	time_of_day = fmod(time_of_day + delta * rate, 24.0)
 	var day_f = clampf(sin((time_of_day - 6.0) / 12.0 * PI), 0.0, 1.0)
@@ -400,6 +444,8 @@ func _physics_process(delta: float) -> void:
 	if crowd_mgr: crowd_mgr.update_crowd(delta, ppos, streamer)
 	if wildlife_mgr: wildlife_mgr.update_wildlife(delta, ppos)
 	if hellfire_mgr: hellfire_mgr.update_hellfire(delta, ppos)
+	if abyss_mgr: abyss_mgr.update_abyss(delta, ppos)
+	if rpg_sys: rpg_sys.update_rpg(u_delta)
 	if streamer and streamer.water_mat:
 		streamer.water_mat.set_shader_parameter("sun_dir", -sun.global_transform.basis.z)
 		streamer.water_mat.set_shader_parameter("sky_reflect_color", sky_mat.sky_horizon_color)
@@ -441,9 +487,12 @@ func _physics_process(delta: float) -> void:
 
 	if not chat_panel.visible:
 		focus_active = Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_ALT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_XBUTTON1) or touch_hud.hold_focus or (active_veh == null and pad_l2 > 0.75)
-		Engine.time_scale = lerpf(Engine.time_scale, 0.35 if focus_active else 1.0, 0.2)
+		var sandy_on = (rpg_sys != null and rpg_sys.sandy_timer > 0.0)
+		var target_ts = 0.24 if sandy_on else (0.35 if focus_active else 1.0)
+		Engine.time_scale = lerpf(Engine.time_scale, target_ts, 0.22)
 		var pc_fire = (input_mode == "PC") and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and (Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
-		var want_fire = pc_fire or touch_hud.hold_fire or Input.is_key_pressed(KEY_J) or (active_veh == null and (Input.is_key_pressed(KEY_SPACE) or (input_mode == "PS5" and pad_fire)))
+		var is_flying = (abyss_mgr != null and abyss_mgr.active and active_veh == null)
+		var want_fire = pc_fire or touch_hud.hold_fire or Input.is_key_pressed(KEY_J) or (active_veh == null and ((Input.is_key_pressed(KEY_SPACE) and not is_flying) or (input_mode == "PS5" and pad_fire)))
 		if want_fire: _fire_weapon()
 
 		if active_veh != null:
@@ -465,17 +514,37 @@ func _physics_process(delta: float) -> void:
 			var sp = Input.is_physical_key_pressed(KEY_SHIFT) or touch_hud.hold_brake or pad_sprint
 			var hold_aim = (input_mode == "PS5" and pad_aim) or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) or touch_hud.hold_focus
 			var is_ads = hold_aim or want_fire
-			var ov_m = 1.45 if (hellfire_mgr and hellfire_mgr.overdrive_timer > 0.0) else 1.0
-			var focus_comp = 1.65 if focus_active else 1.0
-			var move_spd = (6.2 if hold_aim else (11.5 if sp else 7.8)) * ov_m * focus_comp
-			player.velocity.x = d.x * move_spd; player.velocity.z = d.z * move_spd
-			player.velocity.y = 0 if player.is_on_floor() else player.velocity.y - 20.0 * delta
-			player.move_and_slide()
-			if is_ads:
-				player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(cam_f.x, cam_f.z), clampf(delta * 18.0, 0.0, 1.0))
-			elif d.length() > 0.1:
-				player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(d.x, d.z), clampf(delta * 12.0, 0.0, 1.0))
-			player_rig.animate(Vector2(player.velocity.x, player.velocity.z).length(), sp and not is_ads, is_ads, delta)
+			var ov_m = 1.45 if ((hellfire_mgr and hellfire_mgr.overdrive_timer > 0.0) or (abyss_mgr and abyss_mgr.overdrive_timer > 0.0)) else 1.0
+			var rpg_spd = rpg_sys.speed_mult if rpg_sys else 1.0
+			var focus_comp = (2.45 if (rpg_sys and rpg_sys.sandy_timer > 0.0) else (1.65 if focus_active else 1.0)) * rpg_spd
+			if is_flying:
+				var fly_spd = (13.0 if hold_aim else (26.0 if sp else 16.5)) * ov_m * focus_comp
+				var fly_f = -cam.global_transform.basis.z.normalized()
+				var fly_r =  cam.global_transform.basis.x.normalized()
+				var vert = 0.0
+				if Input.is_physical_key_pressed(KEY_SPACE) or (pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_A)): vert += 1.0
+				if Input.is_physical_key_pressed(KEY_CTRL) or Input.is_physical_key_pressed(KEY_C) or (pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_B)): vert -= 1.0
+				var target_v = (fly_r * raw_d.x + fly_f * (-raw_d.y) + Vector3.UP * vert) * fly_spd
+				player.velocity = player.velocity.lerp(target_v, clampf(u_delta * 7.0, 0.0, 1.0))
+				player.move_and_slide()
+				if player.global_position.y < 2.2: player.global_position.y = 2.2
+				if is_ads or raw_d.length() > 0.1:
+					var face_d = cam_f if is_ads else Vector3(player.velocity.x, 0, player.velocity.z)
+					if face_d.length() > 0.1:
+						player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(face_d.x, face_d.z), clampf(u_delta * 14.0, 0.0, 1.0))
+				var loc_v = player_rig.global_transform.basis.inverse() * player.velocity
+				player_rig.animate(player.velocity.length(), sp and not is_ads, is_ads, delta, loc_v, true)
+			else:
+				var move_spd = (6.2 if hold_aim else (11.5 if sp else 7.8)) * ov_m * focus_comp
+				player.velocity.x = d.x * move_spd; player.velocity.z = d.z * move_spd
+				player.velocity.y = 0 if player.is_on_floor() else player.velocity.y - 20.0 * delta
+				player.move_and_slide()
+				if is_ads:
+					player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(cam_f.x, cam_f.z), clampf(u_delta * 18.0, 0.0, 1.0))
+				elif d.length() > 0.1:
+					player_rig.rotation.y = lerp_angle(player_rig.rotation.y, atan2(d.x, d.z), clampf(u_delta * 12.0, 0.0, 1.0))
+				var loc_v = player_rig.global_transform.basis.inverse() * player.velocity
+				player_rig.animate(Vector2(player.velocity.x, player.velocity.z).length(), sp and not is_ads, is_ads, delta, loc_v, false)
 	else:
 		Engine.time_scale = 1.0; player_rig.animate(0.0, false, false, delta)
 
@@ -537,7 +606,11 @@ func _toggle_hellfire() -> void:
 	var nxt = not hellfire_mgr.active
 	hellfire_mgr.set_active(nxt, world_env, sky_mat, sun, _ppos())
 	if touch_hud: touch_hud.hell_enabled = nxt; touch_hud.queue_redraw()
-	_toast("HELLFIRE RIFT OPENED! Hold Right-Click / FOCUS & FIRE to fight demons!" if nxt else "Hellfire Rift Closed — returning to normal world.")
+	_sync_rift_atmosphere()
+	if nxt and abyss_mgr and abyss_mgr.active:
+		_toast("COSMIC INFERNO ACTIVE! Hellfire + Abyss Blended!")
+	else:
+		_toast("HELLFIRE RIFT OPENED! [1-4] Cyberware | [I] Gear" if nxt else "Hellfire Rift Closed.")
 
 func _cycle_input_mode() -> void:
 	var order = ["PC", "PS5", "TOUCH"]
@@ -563,3 +636,48 @@ func _toggle_creator() -> void:
 		_toast("CHARACTER CREATOR OPEN — Customize your hero live!")
 	elif input_mode == "PC":
 		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _toggle_abyss() -> void:
+	if abyss_mgr == null: return
+	var nxt = not abyss_mgr.active
+	if nxt and active_veh != null: _toggle_vehicle()
+	if nxt:
+		player.global_position.y = maxf(player.global_position.y + 14.0, 16.0)
+		player.velocity = Vector3(0, 6.0, 0)
+	abyss_mgr.set_active(nxt, world_env, sky_mat, sun, _ppos())
+	if touch_hud: touch_hud.abyss_enabled = nxt; touch_hud.queue_redraw()
+	_sync_rift_atmosphere()
+	if nxt and hellfire_mgr and hellfire_mgr.active:
+		_toast("COSMIC INFERNO ACTIVE! Hellfire + Abyss Blended!")
+	else:
+		_toast("ABYSS MODE: SPACE FLIGHT ACTIVE! [WASD] Fly | [Space/Ctrl] Up/Down | [1-4] Cyberware!" if nxt else "Abyss Rift Closed — returning to gravity.")
+
+func _sync_rift_atmosphere() -> void:
+	var h_on = (hellfire_mgr != null and hellfire_mgr.active)
+	var a_on = (abyss_mgr != null and abyss_mgr.active)
+	if h_on and a_on:
+		# Blended Cosmic Inferno: deep starfield void + molten crimson-violet horizon & embers
+		world_env.volumetric_fog_enabled = true
+		world_env.volumetric_fog_density = 0.014
+		world_env.volumetric_fog_albedo = Color(0.46, 0.12, 0.24)
+		world_env.glow_intensity = 1.32; world_env.glow_bloom = 0.44; world_env.ambient_light_energy = 0.80
+		sky_mat.sky_top_color = Color(0.05, 0.01, 0.07)
+		sky_mat.sky_horizon_color = Color(0.68, 0.14, 0.26)
+		sky_mat.ground_horizon_color = Color(0.24, 0.05, 0.12)
+		sun.light_color = Color(1.0, 0.46, 0.52); sun.light_energy = 1.25
+	elif h_on:
+		world_env.volumetric_fog_density = 0.018; world_env.volumetric_fog_albedo = Color(0.55, 0.18, 0.06)
+		sky_mat.sky_top_color = Color(0.14, 0.04, 0.02); sky_mat.sky_horizon_color = Color(0.75, 0.24, 0.06)
+		sun.light_color = Color(1.0, 0.48, 0.18); sun.light_energy = 1.25
+	elif a_on:
+		world_env.volumetric_fog_density = 0.008; world_env.volumetric_fog_albedo = Color(0.14, 0.06, 0.34)
+		sky_mat.sky_top_color = Color(0.01, 0.01, 0.04); sky_mat.sky_horizon_color = Color(0.16, 0.05, 0.34)
+		sun.light_color = Color(0.62, 0.78, 1.0); sun.light_energy = 1.05
+	else:
+		world_env.volumetric_fog_density = 0.002; world_env.glow_intensity = 0.72; world_env.glow_bloom = 0.20
+
+func _toggle_rpg() -> void:
+	if rpg_sys == null: return
+	var open = rpg_sys.toggle_panel()
+	if open: Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	elif input_mode == "PC": Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)

@@ -65,19 +65,16 @@ func setup(desktop_mode: bool) -> void:
 
 	# 3. Billowing Hellfire Plumes
 	p_flames = GPUParticles3D.new()
-	p_flames.amount = 150 if is_desktop else 65; p_flames.lifetime = 1.15; p_flames.emitting = false
+	p_flames.amount = 190 if is_desktop else 80; p_flames.lifetime = 1.15; p_flames.emitting = false
 	p_flames.visibility_aabb = AABB(Vector3(-45, -15, -45), Vector3(90, 50, 90))
 	var fl_pm = ParticleProcessMaterial.new()
 	fl_pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_RING
 	fl_pm.emission_ring_radius = 16.0; fl_pm.emission_ring_inner_radius = 5.0; fl_pm.emission_ring_height = 1.0
 	fl_pm.direction = Vector3(0, 1, 0); fl_pm.spread = 22.0; fl_pm.gravity = Vector3(0, 6.5, 0)
-	fl_pm.initial_velocity_min = 3.0; fl_pm.initial_velocity_max = 7.5; fl_pm.scale_min = 0.7; fl_pm.scale_max = 2.2
+	fl_pm.initial_velocity_min = 3.0; fl_pm.initial_velocity_max = 7.5; fl_pm.scale_min = 0.85; fl_pm.scale_max = 2.1
 	p_flames.process_material = fl_pm
-	var fl_mesh = SphereMesh.new(); fl_mesh.radius = 0.48; fl_mesh.height = 1.25
-	var fl_mat = StandardMaterial3D.new(); fl_mat.albedo_color = Color(1.0, 0.32, 0.04, 0.42)
-	fl_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA; fl_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	fl_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	fl_mat.emission_enabled = true; fl_mat.emission = Color(1.0, 0.42, 0.08); fl_mat.emission_energy_multiplier = 4.2
+	var fl_mesh = QuadMesh.new(); fl_mesh.size = Vector2(1.45, 2.35)
+	var fl_mat = ShaderMaterial.new(); fl_mat.shader = load("res://shaders/flicker_fire.gdshader")
 	fl_mesh.material = fl_mat; p_flames.draw_pass_1 = fl_mesh; fx_root.add_child(p_flames)
 
 	# 4. Flickering Dynamic Fire Rim-Lights
