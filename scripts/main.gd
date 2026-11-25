@@ -23,6 +23,9 @@ var rpg_sys: RPGSystem = null
 var nature_mgr: NatureManager = null
 var uap_form: BiblicalUAP = null
 var is_uap_form := false
+var _macro_cam_pull := 0.0
+var _macro_fov_add := 0.0
+var _arch_fire_cd := 0.0
 var noclip_mode := false
 var _saved_col_mask := 1
 var _saved_col_layer := 1
@@ -31,6 +34,8 @@ var uap_hud_lbl: Label = null
 var cosmos_mgr: CosmosManager = null
 var space_sky_mat: ShaderMaterial = null
 var planet_chat: PlanetChat = null
+var multiverse_net: MultiverseNet = null
+var archetype_mgr: ArchetypeNPCManager = null
 var char_creator: CharacterCreatorUI = null
 var max_hp := 100.0
 var event_dir: EventDirector = null
@@ -95,6 +100,12 @@ func _ready() -> void:
 	uap_form = BiblicalUAP.new(); uap_form.visible = false; player.add_child(uap_form)
 	cosmos_mgr = CosmosManager.new(); add_child(cosmos_mgr); cosmos_mgr.setup()
 	planet_chat = PlanetChat.new(); add_child(planet_chat)
+	multiverse_net = MultiverseNet.new(); add_child(multiverse_net); multiverse_net.setup()
+	multiverse_net.warp_requested.connect(_on_multiverse_warp)
+	multiverse_net.multiverse_toast.connect(_on_multiverse_toast)
+	archetype_mgr = ArchetypeNPCManager.new(); add_child(archetype_mgr)
+	archetype_mgr.npc_emerged.connect(_on_multiverse_toast)
+	archetype_mgr.npc_destroyed.connect(_on_archetype_destroyed)
 	planet_chat.discourse_impact.connect(_on_discourse_impact)
 	planet_chat.closed.connect(_on_planet_chat_closed)
 	space_sky_mat = ShaderMaterial.new(); space_sky_mat.shader = load("res://shaders/deep_space_sky.gdshader")
@@ -108,6 +119,11 @@ func _ready() -> void:
 	abyss_mgr.pickup_collected.connect(func(k, m): if k == "astral": player_hp = minf(max_hp, player_hp + 35.0); banked_cash += 400; if audio_mgr: audio_mgr.play_chime(); _toast(m))
 	_build_hud()
 	var init_m = "TOUCH" if (not is_desktop) else ("PS5" if not Input.get_connected_joypads().is_empty() else "PC")
+	var vp = get_viewport()
+	if vp:
+		vp.msaa_3d = Viewport.MSAA_4X if is_desktop else Viewport.MSAA_2X
+		vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
+	if cam: cam.far = 14000.0
 	_set_input_mode("TOUCH" if OS.has_feature("web") else init_m)
 	call_deferred("_toggle_abyss")
 
@@ -388,13 +404,17 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_F5: _toggle_abyss()
 			KEY_F6: _toggle_noclip()
 			KEY_Z:
-				if cosmos_mgr: cosmos_mgr.interact_nearest("seed", _ppos())
+				if cosmos_mgr:
+					cosmos_mgr.interact_nearest("seed", _ppos())
+					if multiverse_net: multiverse_net.record_seeded_planet()
 			KEY_X:
 				if cosmos_mgr: cosmos_mgr.interact_nearest("teach", _ppos())
 			KEY_V:
 				if cosmos_mgr: cosmos_mgr.interact_nearest("smite", _ppos())
 			KEY_C:
 				if not (abyss_mgr and abyss_mgr.active and Input.is_physical_key_pressed(KEY_SHIFT)): _open_planet_discourse()
+			KEY_M:
+				_toggle_multiverse_panel()
 			KEY_H:
 				if cosmos_mgr: cosmos_mgr.toggle_chronicle()
 			KEY_B:
@@ -417,6 +437,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				if audio_mgr: _toast("AUDIO: " + ("MUTED" if audio_mgr.toggle_mute() else "ON"))
 			KEY_C:
 				if not (abyss_mgr and abyss_mgr.active and Input.is_physical_key_pressed(KEY_SHIFT)): _open_planet_discourse()
+			KEY_M:
+				_toggle_multiverse_panel()
 			KEY_H: ots_cam.swap_shoulder()
 			KEY_F:
 				if event_dir: event_dir.try_interact(_ppos(), streamer)
@@ -510,6 +532,34 @@ func _physics_process(delta: float) -> void:
 		var siphon_on = is_uap_form and Input.is_physical_key_pressed(KEY_G)
 		cosmos_mgr.update_cosmos(delta, ppos, is_uap_form, siphon_on)
 		if uap_form: uap_form.set_siphon_state(siphon_on, cosmos_mgr.stored_mass / 100.0)
+		if multiverse_net: multiverse_net.update_multiverse(delta, ppos)
+	var u_sc := uap_form.get_scale_factor() if (is_uap_form and uap_form) else 1.0
+	var grow := maxf(0.0, u_sc - 1.0)
+	var macro_t := clampf(grow / 5.0, 0.0, 1.0)
+	var tgt_pull := grow * 28.0 + pow(grow, 1.65) * 18.0
+	var tgt_fov := grow * 7.5
+	_macro_cam_pull = lerpf(_macro_cam_pull, tgt_pull, clampf(delta * 1.9, 0.0, 1.0))
+	_macro_fov_add = lerpf(_macro_fov_add, tgt_fov, clampf(delta * 1.9, 0.0, 1.0))
+	if abyss_mgr:
+		abyss_mgr.cosmic_reveal = clampf(pow(macro_t, 0.72), 0.0, 1.0)
+	if cam:
+		cam.near = lerpf(0.1, 1.8, macro_t)
+		cam.far = lerpf(14000.0, 32000.0, macro_t)
+		if _macro_cam_pull > 0.05:
+			cam.global_position += cam.global_transform.basis.z * _macro_cam_pull + Vector3.UP * (_macro_cam_pull * 0.34)
+			if not Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not (touch_hud and touch_hud.hold_aim):
+				cam.fov = clampf(cam.fov + _macro_fov_add, 55.0, 114.0)
+		if archetype_mgr:
+			archetype_mgr.update_npcs(delta, cosmos_mgr.planets, ppos)
+			_arch_fire_cd = maxf(0.0, _arch_fire_cd - delta)
+			var ui_open := (chat_panel and chat_panel.visible) or (planet_chat and planet_chat.panel.visible) or (multiverse_net and multiverse_net.panel.visible)
+			var firing_arch := (not ui_open) and ((input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) or (touch_hud and touch_hud.hold_fire) or (input_mode == "PS5" and Input.get_joy_axis(0, JOY_AXIS_TRIGGER_RIGHT) > 0.35))
+			if firing_arch and _arch_fire_cd <= 0.0 and cam:
+				var res = archetype_mgr.try_hit_ray(cam.global_position, -cam.global_transform.basis.z, 34.0)
+				if not res.is_empty():
+					_arch_fire_cd = 0.16
+					if cosmos_mgr: cosmos_mgr._spawn_beam(ppos, res["pos"], Color(1.0, 0.32, 0.12), 1.4)
+					if audio_mgr: audio_mgr.play_chime()
 	if abyss_mgr:
 		abyss_mgr.update_abyss(delta, ppos)
 		if uap_hud_lbl:
@@ -557,7 +607,7 @@ func _physics_process(delta: float) -> void:
 	var pad_fire = (pad_r2 > 0.25) or (pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_RIGHT_SHOULDER))
 	var pad_sprint = pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_LEFT_STICK)
 
-	if not chat_panel.visible and not (planet_chat and planet_chat.panel.visible):
+	if not chat_panel.visible and not (planet_chat and planet_chat.panel.visible) and not (multiverse_net and multiverse_net.panel.visible):
 		focus_active = Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_ALT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_XBUTTON1) or touch_hud.hold_focus or (active_veh == null and pad_l2 > 0.75)
 		var sandy_on = (rpg_sys != null and rpg_sys.sandy_timer > 0.0)
 		var target_ts = 0.24 if sandy_on else (0.35 if focus_active else 1.0)
@@ -734,6 +784,8 @@ func _toggle_abyss() -> void:
 		if is_uap_form: _set_uap_form(false)
 	abyss_mgr.set_active(nxt, world_env, sky_mat, sun, _ppos())
 	if cosmos_mgr: cosmos_mgr.set_active(nxt, _ppos())
+	if multiverse_net: multiverse_net.set_active(nxt, _ppos())
+	if archetype_mgr: archetype_mgr.set_active(nxt)
 	if touch_hud: touch_hud.abyss_enabled = nxt; touch_hud.queue_redraw()
 	_sync_rift_atmosphere()
 	if nxt and hellfire_mgr and hellfire_mgr.active:
@@ -833,3 +885,28 @@ func _step_noclip(u_delta: float) -> void:
 	if mv.length() > 0.01:
 		player.global_position += mv.normalized() * spd * u_delta
 	player.velocity = Vector3.ZERO
+
+func _toggle_multiverse_panel() -> void:
+	if multiverse_net == null: return
+	var summary := archetype_mgr.get_summary_lines() if archetype_mgr else ""
+	multiverse_net.toggle_panel(summary)
+	if multiverse_net.panel.visible:
+		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
+	elif input_mode == "PC":
+		Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED)
+
+func _on_multiverse_warp(u_id: int, s_seed: int, _label: String) -> void:
+	if archetype_mgr: archetype_mgr.clear_sector_npcs()
+	if cosmos_mgr: cosmos_mgr.regenerate_sector(u_id, s_seed, _ppos())
+
+func _on_multiverse_toast(msg: String) -> void:
+	if audio_mgr: audio_mgr.play_chime()
+	_toast(msg)
+
+func _on_archetype_destroyed(msg: String, cash: int, xp: int, loot: bool) -> void:
+	banked_cash += cash
+	if rpg_sys:
+		rpg_sys.add_xp(xp)
+		if loot: rpg_sys.roll_loot_drop(true)
+	if audio_mgr: audio_mgr.play_chime()
+	_toast(msg)

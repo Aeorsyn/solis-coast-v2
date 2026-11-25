@@ -13,6 +13,9 @@ var light_b: OmniLight3D
 var moon_body: StaticBody3D = null
 var moon_mesh: MeshInstance3D = null
 var moon_pos := Vector3.ZERO
+var macro_root: Node3D = null
+var macro_mats: Array[StandardMaterial3D] = []
+var cosmic_reveal := 0.0
 
 # Array name kept as "demons" so RPG Short Circuit & Plasma Dash work seamlessly
 var demons: Array[Dictionary] = []
@@ -135,6 +138,7 @@ func setup(desktop_mode: bool) -> void:
 	var mcol = CollisionShape3D.new(); var mcs = SphereShape3D.new(); mcs.radius = 52.0
 	mcol.shape = mcs; moon_body.add_child(mcol)
 	add_child(moon_body)
+	_build_macro_superstructure()
 
 func _init_cached_assets() -> void:
 	# Tic-Tac Interceptor meshes
@@ -189,9 +193,14 @@ func set_active(state: bool, env: Environment, sky: ProceduralSkyMaterial, sun: 
 			moon_pos = Vector3(focus_pos.x, 265.0, focus_pos.z - 250.0)
 			moon_body.global_position = moon_pos
 			moon_body.visible = true
+		if macro_root:
+			macro_root.global_position = Vector3(focus_pos.x, 300.0, focus_pos.z)
+			macro_root.visible = true
 		env.volumetric_fog_enabled = false
-		env.fog_enabled = true; env.fog_density = 0.005; env.fog_light_color = Color(0.14, 0.06, 0.34)
-		env.glow_intensity = 1.25; env.glow_bloom = 0.40; env.ambient_light_energy = 0.72
+		env.fog_enabled = false
+		env.tonemap_mode = Environment.TONE_MAPPER_ACES
+		env.tonemap_exposure = 1.06
+		env.glow_enabled = true; env.glow_intensity = 0.88; env.glow_bloom = 0.16; env.glow_hdr_threshold = 1.18; env.ambient_light_energy = 0.62
 		sky.sky_top_color = Color(0.01, 0.01, 0.04)
 		sky.sky_horizon_color = Color(0.16, 0.05, 0.34)
 		sky.ground_horizon_color = Color(0.05, 0.02, 0.14)
@@ -201,6 +210,7 @@ func set_active(state: bool, env: Environment, sky: ProceduralSkyMaterial, sun: 
 		for i in init_cnt: _spawn_uap_enemy(focus_pos, "")
 	else:
 		if moon_body: moon_body.visible = false
+		if macro_root: macro_root.visible = false
 		env.fog_enabled = false; env.glow_intensity = 0.72; env.glow_bloom = 0.20
 		for d in demons:
 			if is_instance_valid(d["body"]): d["body"].queue_free()
@@ -366,6 +376,12 @@ func update_abyss(delta: float, focus_pos: Vector3) -> void:
 
 	fx_root.global_position = focus_pos
 	if moon_mesh and moon_body.visible: moon_mesh.rotate_y(delta * 0.015)
+	if macro_root and macro_root.visible:
+		macro_root.rotate_y(delta * 0.008)
+		for k in macro_mats.size():
+			var m = macro_mats[k]
+			m.albedo_color.a = lerpf(0.06, 0.52, cosmic_reveal)
+			m.emission_energy_multiplier = lerpf(0.65, 3.8, cosmic_reveal)
 	var t = Time.get_ticks_msec() * 0.008
 	light_a.position = Vector3(sin(t) * 4.5, 3.0, cos(t) * 4.5)
 	light_b.position = Vector3(-cos(t * 0.9) * 4.5, -2.0, sin(t * 1.1) * 4.5)
@@ -458,3 +474,27 @@ func update_abyss(delta: float, focus_pos: Vector3) -> void:
 						var sp_a = (TAU * float(k) / 6.0) + d["phase"] * 0.2
 						var d_rad = (aim_dir * 0.75 + Vector3(cos(sp_a), sin(sp_a) * 0.35, sin(sp_a)) * 0.45).normalized()
 						_spawn_bolt(b.global_position, d_rad, 3, 22.0)
+
+func _build_macro_superstructure() -> void:
+	# Colossal higher-dimensional Celestial Astrolabe & Galactic Rings surrounding the entire cosmos
+	macro_root = Node3D.new()
+	macro_root.visible = false
+	add_child(macro_root)
+	var cols = [Color(1.0, 0.82, 0.34), Color(0.22, 0.88, 1.0), Color(0.76, 0.32, 1.0)]
+	var radii = [1550.0, 2250.0, 3100.0]
+	var tilts = [Vector3(24, 0, 14), Vector3(-32, 40, -18), Vector3(68, -25, 32)]
+	for i in 3:
+		var mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(cols[i].r, cols[i].g, cols[i].b, 0.08)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.emission_enabled = true; mat.emission = cols[i]; mat.emission_energy_multiplier = 0.8
+		macro_mats.append(mat)
+		var tor = TorusMesh.new()
+		tor.inner_radius = radii[i] - 18.0; tor.outer_radius = radii[i] + 18.0
+		tor.rings = 64; tor.ring_segments = 6; tor.material = mat
+		var mi = MeshInstance3D.new(); mi.mesh = tor
+		mi.rotation_degrees = tilts[i]
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		macro_root.add_child(mi)

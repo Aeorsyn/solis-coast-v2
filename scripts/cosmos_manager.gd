@@ -16,6 +16,7 @@ var stars: Array[Dictionary] = []
 var beams: Array[Dictionary] = []
 var war_fleets: Array[Dictionary] = []
 var signal_rings: Array[Dictionary] = []
+var ejection_streams: Array[Dictionary] = []
 
 # Pooled GPU-instanced Katamari debris (chunks + mote dust = 2 draw calls total)
 const MAX_CHUNKS := 900
@@ -156,6 +157,24 @@ func _create_planet(sp: Dictionary) -> void:
 	var mi = MeshInstance3D.new(); mi.mesh = sph; mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	body.add_child(mi)
 
+	# Concentric Holographic & Parallax Atmosphere Depth Shells (2 layers)
+	var holo_sh = load("res://shaders/planet_holo_shell.gdshader")
+	var h_in_mat = ShaderMaterial.new(); h_in_mat.shader = holo_sh
+	h_in_mat.set_shader_parameter("planet_seed", sp["seed"])
+	h_in_mat.set_shader_parameter("shell_layer", 0.0)
+	h_in_mat.set_shader_parameter("atmo_color", sp["atmo"])
+	var h_in_m = SphereMesh.new(); h_in_m.radius = sp["r"] * 1.038; h_in_m.height = sp["r"] * 2.076; h_in_m.radial_segments = 32; h_in_m.rings = 16; h_in_m.material = h_in_mat
+	var h_in = MeshInstance3D.new(); h_in.mesh = h_in_m; h_in.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	body.add_child(h_in)
+
+	var h_out_mat = ShaderMaterial.new(); h_out_mat.shader = holo_sh
+	h_out_mat.set_shader_parameter("planet_seed", sp["seed"] + 3.1)
+	h_out_mat.set_shader_parameter("shell_layer", 1.0)
+	h_out_mat.set_shader_parameter("atmo_color", sp["atmo"])
+	var h_out_m = SphereMesh.new(); h_out_m.radius = sp["r"] * 1.088; h_out_m.height = sp["r"] * 2.176; h_out_m.radial_segments = 32; h_out_m.rings = 16; h_out_m.material = h_out_mat
+	var h_out = MeshInstance3D.new(); h_out.mesh = h_out_m; h_out.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	body.add_child(h_out)
+
 	var col = CollisionShape3D.new(); var cs = SphereShape3D.new(); cs.radius = sp["r"]
 	col.shape = cs; body.add_child(col)
 
@@ -250,7 +269,7 @@ func _create_planet(sp: Dictionary) -> void:
 	planets.append({
 		"name": sp["name"], "kind": sp["kind"], "emissary": sp["emissary"], "persona": sp["persona"], "greeting": sp["greeting"], "ptype": sp["ptype"], "fleet_piv": fleet_piv,
 		"offset": sp["offset"], "r": sp["r"], "atmo": sp["atmo"], "land": sp["land"],
-		"body": body, "col": col, "mesh": mi, "mat": mat, "label": lbl,
+		"body": body, "col": col, "mesh": mi, "mat": mat, "label": lbl, "holo_inner": h_in, "holo_outer": h_out, "holo_in_mat": h_in_mat, "holo_out_mat": h_out_mat,
 		"ring_piv": ring_piv, "star_piv": star_piv, "mega_piv": mega_piv,
 		"shattered": false, "reform_scale": 1.0, "megalith_built": false,
 		"stage": 0, "year": 0.0, "pop": 0.0, "tech": 0.0, "faith": 0.0, "stability": 100.0,
@@ -473,28 +492,41 @@ func reforge_planet(player_pos: Vector3, cam_fwd: Vector3) -> void:
 		chronicle_event.emit("All 8 worlds are intact! Shatter a planet [B] first to re-forge it.")
 		return
 
-	var spawn_pos = player_pos + cam_fwd.normalized() * 96.0
-	spawn_pos.y = maxf(spawn_pos.y, 90.0)
-	_spawn_beam(player_pos, spawn_pos, Color(1.0, 0.88, 0.35), 4.2)
+	var expelled_mass = stored_mass
+	var mass_mult = clampf(0.95 + (expelled_mass / 100.0) * 0.22, 1.0, 2.05)
+	var spawn_dist = 110.0 + (expelled_mass / 100.0) * 28.0
+	var spawn_pos = player_pos + cam_fwd.normalized() * spawn_dist
+	spawn_pos.y = maxf(spawn_pos.y, 95.0)
+	_spawn_beam(player_pos, spawn_pos, Color(1.0, 0.88, 0.35), 4.6)
+
+	# Clear ALL stored mass and any straggling nearby debris so ZERO leftovers float around the UAP
+	stored_mass = 0.0
+	debris_chunks.clear()
+	debris_motes.clear()
+	mm_chunks.multimesh.visible_instance_count = 0
+	mm_motes.multimesh.visible_instance_count = 0
 
 	target_p["shattered"] = false
 	target_p["body"].global_position = spawn_pos
 	target_p["body"].visible = true
 	target_p["col"].disabled = false
 	target_p["reform_scale"] = 0.08
+	target_p["target_scale"] = mass_mult
 	target_p["mesh"].scale = Vector3.ONE * 0.08
 	target_p["ruin_v"] = 1.0
 	target_p["stage"] = 0; target_p["tech"] = 0.0; target_p["year"] = 0.0; target_p["stability"] = 100.0
-	stored_mass = maxf(0.0, stored_mass - 100.0)
 
-	for i in 85:
-		if debris_motes.size() >= MAX_MOTES: debris_motes.pop_front()
-		var dir = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)).normalized()
-		debris_motes.append({
-			"pos": player_pos + cam_fwd.normalized() * 8.0,
-			"vel": (spawn_pos - player_pos).normalized() * randf_range(45.0, 65.0) + dir * 12.0,
-			"sc": randf_range(0.8, 1.8), "col": Color(1.0, 0.85, 0.30)
-		})
+	# Coalescing golden stream that fires FROM the UAP straight INTO the new planet and vanishes on impact
+	for i in 18:
+		var mi = MeshInstance3D.new()
+		var sm = SphereMesh.new(); sm.radius = randf_range(1.1, 2.4); sm.height = sm.radius * 2.0; sm.radial_segments = 6; sm.rings = 3
+		var emat = StandardMaterial3D.new(); emat.albedo_color = Color(1.0, 0.86, 0.34); emat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		emat.emission_enabled = true; emat.emission = Color(1.0, 0.72, 0.22); emat.emission_energy_multiplier = 4.5
+		sm.material = emat; mi.mesh = sm; mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		var offset = Vector3(randf_range(-10, 10), randf_range(-10, 10), randf_range(-10, 10))
+		mi.global_position = player_pos + offset
+		add_child(mi)
+		ejection_streams.append({"node": mi, "from": player_pos + offset, "to": spawn_pos, "t": 0.0, "spd": randf_range(1.2, 2.1)})
 
 	_record(target_p, "WORLD RE-FORGED! Planetary dust ejected from UAP core — %s coalesces anew! Press [Z] to Seed!" % target_p["name"])
 	reward_granted.emit(800, 140, false)
@@ -606,6 +638,16 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 		sr["node"].scale += Vector3.ONE * delta * 1.4
 		if sr["t"] <= 0.0: sr["node"].queue_free(); signal_rings.remove_at(i)
 
+	for i in range(ejection_streams.size() - 1, -1, -1):
+		var es = ejection_streams[i]
+		es["t"] += delta * es["spd"]
+		if es["t"] >= 1.0:
+			es["node"].queue_free(); ejection_streams.remove_at(i)
+		else:
+			var et = es["t"] * es["t"]
+			es["node"].global_position = es["from"].lerp(es["to"], et)
+			es["node"].scale = Vector3.ONE * (1.0 - et * 0.65)
+
 	if not active: return
 
 	# Spin Neutron Pulsar polar jets
@@ -630,13 +672,14 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 			var to_uap = player_pos - d["pos"]
 			var dist = to_uap.length()
 
-			if siphon_held and dist < 420.0:
+			if siphon_held and dist < 2500.0:
 				var pull_dir = to_uap.normalized() if dist > 0.1 else Vector3.UP
 				var swirl = pull_dir.cross(Vector3.UP)
 				if swirl.length() < 0.1: swirl = Vector3.RIGHT
-				var pull_spd = lerpf(210.0, 75.0, clampf(dist / 420.0, 0.0, 1.0))
+				var pull_spd = lerpf(320.0, 110.0, clampf(dist / 900.0, 0.0, 1.0))
 				d["vel"] = d["vel"].lerp(pull_dir * pull_spd + swirl.normalized() * (42.0 * clampf(dist / 120.0, 0.0, 1.0)), clampf(delta * 7.5, 0.0, 1.0))
-				if dist < 8.5:
+				var cap_r = 9.5 + (stored_mass / 100.0) * 6.0
+				if dist < cap_r:
 					stored_mass = minf(500.0, stored_mass + mass_gain)
 					arr.remove_at(i); continue
 			else:
@@ -678,11 +721,17 @@ func update_cosmos(delta: float, player_pos: Vector3, is_uap: bool, siphon_held 
 		var p = planets[i]
 		if p["shattered"]: continue
 
-		if p["reform_scale"] < 1.0:
-			p["reform_scale"] = minf(1.0, p["reform_scale"] + delta * 0.65)
+		var tgt_sc: float = p.get("target_scale", 1.0)
+		if p["reform_scale"] < tgt_sc:
+			p["reform_scale"] = minf(tgt_sc, p["reform_scale"] + delta * 0.85)
 			p["mesh"].scale = Vector3.ONE * p["reform_scale"]
 
 		p["mesh"].rotate_y(delta * 0.04)
+		p["holo_inner"].rotate_y(-delta * 0.065)
+		p["holo_outer"].rotate_y(delta * 0.028)
+		p["holo_outer"].rotate_x(delta * 0.012)
+		p["holo_inner"].scale = p["mesh"].scale
+		p["holo_outer"].scale = p["mesh"].scale
 		p["fleet_piv"].visible = (p["stage"] > 0 and not p["shattered"])
 		if p["fleet_piv"].visible: p["fleet_piv"].rotate_y(delta * (0.28 + float(p["stage"]) * 0.12))
 		if p["ring_piv"].visible: p["ring_piv"].rotate_y(delta * 0.16)
@@ -821,3 +870,32 @@ func apply_discourse_impact(p_name: String, d_tech: float, d_faith: float, d_sta
 			p["stability"] = clampf(p["stability"] + d_stab, 0.0, 100.0)
 			_record(p, "DISCOURSE: " + note)
 			break
+
+func regenerate_sector(u_id: int, s_seed: int, origin: Vector3) -> void:
+	var rng = RandomNumberGenerator.new()
+	rng.seed = u_id * 9973 + s_seed * 31
+	var prefixes = ["AURA", "ZION", "KAIROS", "HYPER", "NEXUS", "SOLIS", "ASTRA", "ORION", "VALA", "CHRONO", "ELYS", "VEX"]
+	var suffixes = ["PRIME", "IX", "VII", "MAJOR", "OMEGA", "NOVA", "CORE", "REACH", "V", "ALPHA", "DRIFT", "CROWN"]
+	for i in planets.size():
+		var p = planets[i]
+		p["name"] = "%s-%s-%d" % [prefixes[rng.randi() % prefixes.size()], suffixes[rng.randi() % suffixes.size()], u_id]
+		p["shattered"] = false
+		p["body"].visible = true; p["col"].disabled = false
+		p["stage"] = 0; p["tech"] = 0.0; p["year"] = 0.0; p["faith"] = 0.0; p["stability"] = 100.0
+		p["life_v"] = 0.0; p["civ_v"] = 0.0; p["ruin_v"] = 0.0; p["megalith_built"] = false
+		p["ring_piv"].visible = false; p["star_piv"].visible = false; p["mega_piv"].visible = false; p["fleet_piv"].visible = false
+		var ang = (TAU * float(i) / float(planets.size())) + rng.randf_range(-0.25, 0.25)
+		var rad_d = rng.randf_range(210.0, 520.0)
+		var y_h = rng.randf_range(175.0, 360.0)
+		p["body"].global_position = Vector3(origin.x + cos(ang) * rad_d, y_h, origin.z + sin(ang) * rad_d)
+		var n_atmo = Color.from_hsv(rng.randf(), 0.78, 1.0)
+		var n_land = Color.from_hsv(rng.randf(), 0.62, 0.65)
+		var n_sea  = Color.from_hsv(rng.randf(), 0.74, 0.45)
+		p["atmo"] = n_atmo; p["land"] = n_land
+		p["mat"].set_shader_parameter("planet_seed", rng.randf_range(1.0, 48.0))
+		p["mat"].set_shader_parameter("atmo_color", n_atmo)
+		p["holo_in_mat"].set_shader_parameter("atmo_color", n_atmo)
+		p["holo_out_mat"].set_shader_parameter("atmo_color", n_atmo)
+		p["mat"].set_shader_parameter("land_color", n_land)
+		p["mat"].set_shader_parameter("ocean_color", n_sea)
+		p["history"] = ["%s discovered in Universe #%d." % [p["name"], u_id]]
