@@ -45,7 +45,7 @@ func _input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion and (Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)):
 			var s = mouse_aim_sens if is_aiming else mouse_sens
 			yaw -= event.relative.x * s
-			pitch = clampf(pitch - event.relative.y * s * 0.9, -1.05, 0.55)
+			pitch = clampf(pitch - event.relative.y * s * 0.9, -1.18, 1.18)
 			free_look_timer = 1.4
 	elif input_mode == "TOUCH":
 		if event is InputEventScreenTouch:
@@ -56,7 +56,7 @@ func _input(event: InputEvent) -> void:
 				look_touch_idx = -1
 		elif event is InputEventScreenDrag and event.index == look_touch_idx:
 			yaw -= event.relative.x * 0.0055
-			pitch = clampf(pitch - event.relative.y * 0.0045, -1.05, 0.55)
+			pitch = clampf(pitch - event.relative.y * 0.0045, -1.18, 1.18)
 			free_look_timer = 1.4
 
 func update_cam(delta: float, target: Node3D, in_vehicle: bool, aiming: bool) -> void:
@@ -67,7 +67,7 @@ func update_cam(delta: float, target: Node3D, in_vehicle: bool, aiming: bool) ->
 	if rs.length() > 0.001:
 		var sens = stick_aim_sens if is_aiming else stick_sens
 		yaw -= rs.x * sens * u_delta
-		pitch = clampf(pitch - rs.y * sens * 0.78 * u_delta, -1.05, 0.55)
+		pitch = clampf(pitch - rs.y * sens * 0.78 * u_delta, -1.18, 1.18)
 		free_look_timer = 1.4
 	elif free_look_timer > 0.0:
 		free_look_timer -= u_delta

@@ -166,7 +166,6 @@ func _fire_weapon() -> void:
 		var ah = get_world_3d().direct_space_state.intersect_ray(aq)
 		if ah: aim_pt = ah["position"]
 		dir = (aim_pt - orig).normalized()
-		player_rig.rotation.y = atan2(dir.x, dir.z)
 
 	var end_p = orig + dir * 65.0
 	var q = PhysicsRayQueryParameters3D.create(orig, end_p); q.exclude = excl
@@ -423,9 +422,10 @@ func _physics_process(delta: float) -> void:
 	if muzzle_t > 0.0:
 		muzzle_t -= delta
 		if muzzle_t <= 0.0: muzzle_light.visible = false
-	if fire_cd > 0.0: fire_cd -= delta
+	var u_delta = delta / maxf(Engine.time_scale, 0.08)
+	if fire_cd > 0.0: fire_cd -= u_delta
 	if reload_t > 0.0:
-		reload_t -= delta
+		reload_t -= u_delta
 		if reload_t <= 0.0: ammo = max_ammo; _toast("Reloaded (30/30).")
 	for i in range(tracers.size() - 1, -1, -1):
 		tracers[i]["t"] -= delta
@@ -440,7 +440,7 @@ func _physics_process(delta: float) -> void:
 	var pad_sprint = pad >= 0 and Input.is_joy_button_pressed(pad, JOY_BUTTON_LEFT_STICK)
 
 	if not chat_panel.visible:
-		focus_active = Input.is_key_pressed(KEY_Q) or touch_hud.hold_focus or (active_veh == null and pad_l2 > 0.75)
+		focus_active = Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_ALT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_XBUTTON1) or touch_hud.hold_focus or (active_veh == null and pad_l2 > 0.75)
 		Engine.time_scale = lerpf(Engine.time_scale, 0.35 if focus_active else 1.0, 0.2)
 		var pc_fire = (input_mode == "PC") and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and (Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
 		var want_fire = pc_fire or touch_hud.hold_fire or Input.is_key_pressed(KEY_J) or (active_veh == null and (Input.is_key_pressed(KEY_SPACE) or (input_mode == "PS5" and pad_fire)))
@@ -453,19 +453,21 @@ func _physics_process(delta: float) -> void:
 			active_veh.apply_drive_input(thr, st, ebrake, delta)
 		else:
 			var raw_d = Vector2(touch_hud.joy_vec.x + pad_ls.x, touch_hud.joy_vec.y + pad_ls.y)
-			if Input.is_key_pressed(KEY_W): raw_d.y -= 1.0
-			if Input.is_key_pressed(KEY_S): raw_d.y += 1.0
-			if Input.is_key_pressed(KEY_A): raw_d.x -= 1.0
-			if Input.is_key_pressed(KEY_D): raw_d.x += 1.0
+			if Input.is_physical_key_pressed(KEY_W): raw_d.y -= 1.0
+			if Input.is_physical_key_pressed(KEY_S): raw_d.y += 1.0
+			if Input.is_physical_key_pressed(KEY_A): raw_d.x -= 1.0
+			if Input.is_physical_key_pressed(KEY_D): raw_d.x += 1.0
 			if raw_d.length() > 1.0: raw_d = raw_d.normalized()
 			# Camera-relative movement so strafing & right-stick aiming work together
 			var cam_f = -ots_cam.yaw_pivot.global_transform.basis.z; cam_f.y = 0; cam_f = cam_f.normalized()
 			var cam_r =  ots_cam.yaw_pivot.global_transform.basis.x; cam_r.y = 0; cam_r = cam_r.normalized()
 			var d = cam_r * raw_d.x + cam_f * (-raw_d.y)
-			var sp = Input.is_key_pressed(KEY_SHIFT) or touch_hud.hold_brake or pad_sprint
-			var is_ads = want_fire or focus_active or (input_mode == "PS5" and pad_aim) or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT))
+			var sp = Input.is_physical_key_pressed(KEY_SHIFT) or touch_hud.hold_brake or pad_sprint
+			var hold_aim = (input_mode == "PS5" and pad_aim) or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)) or touch_hud.hold_focus
+			var is_ads = hold_aim or want_fire
 			var ov_m = 1.45 if (hellfire_mgr and hellfire_mgr.overdrive_timer > 0.0) else 1.0
-			var move_spd = (5.0 if is_ads else (11.5 if sp else 7.2)) * ov_m
+			var focus_comp = 1.65 if focus_active else 1.0
+			var move_spd = (6.2 if hold_aim else (11.5 if sp else 7.8)) * ov_m * focus_comp
 			player.velocity.x = d.x * move_spd; player.velocity.z = d.z * move_spd
 			player.velocity.y = 0 if player.is_on_floor() else player.velocity.y - 20.0 * delta
 			player.move_and_slide()
@@ -477,9 +479,12 @@ func _physics_process(delta: float) -> void:
 	else:
 		Engine.time_scale = 1.0; player_rig.animate(0.0, false, false, delta)
 
-	var aiming_now = (not chat_panel.visible) and (active_veh == null) and (focus_active or (input_mode == "PS5" and (pad_aim or pad_fire)) or touch_hud.hold_fire or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)))
+	var aiming_now = (not chat_panel.visible) and (active_veh == null) and ((input_mode == "PS5" and (pad_aim or pad_fire)) or touch_hud.hold_fire or touch_hud.hold_focus or (input_mode == "PC" and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)))
 	ots_cam.update_cam(delta, active_veh if active_veh else player, active_veh != null, aiming_now)
-	if crosshair: crosshair.visible = aiming_now
+	if crosshair:
+		var show_xh = (not chat_panel.visible) and (active_veh == null) and (aiming_now or (input_mode == "PC" and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED))
+		crosshair.visible = show_xh
+		crosshair.color = Color(1.0, 0.35, 0.12, 0.95) if aiming_now else Color(0.25, 0.98, 1.0, 0.85)
 	if minimap_hud: minimap_hud.queue_redraw()
 
 	if msg_timer > 0.0: msg_timer -= delta
